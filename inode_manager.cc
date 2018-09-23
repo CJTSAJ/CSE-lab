@@ -248,14 +248,51 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
   inode_t *ino = get_inode(inum);
   int old_block_num = (ino->size - 1) / BLOCK_SIZE + 1;
   int new_block_num = (size - 1) / BLOCK_SIZE + 1;
+  blockid_t indirect_buf[NINDIRECT];
 
   /*adjust the number of blocks
   * no adjust if thay have the same number of blocks
   */
-  if(old_block_num > new_block_num){ // smaller than the old
+  if(old_block_num > new_block_num){ // smaller than the old  need to free some blocks
+    if(new_block_num < NDIRECT){
+      if(old_block_num <= NDIRECT){
+        for(int i = new_block_num; i < old_block_num; i++)
+          bm->free_block(ino->blocks[i]);
+      }else{//need to free indirect block
+        for(int i = new_block_num; i < NDIRECT; i++)
+          bm->free_block(ino->blocks[i])
+        blockid_t indirect_blockid = ino->blocks[NDIRECT];
+        bm->read_block(indirect_blockid, indirect_buf);
 
-  }else if(old_block_num < new_block_num){ // bigger than the old
+        bm->free_block(indirect_blockid);/*free the indirect block*/
 
+        int delt_num = old_block_num - NDIRECT;
+        for(int i = 0; i < delt_num; i++)
+          bm->free_block(indirect_buf[i]);
+      }
+    }else{
+      /*read the indirect block*/
+      blockid_t indirect_blockid = ino->blocks[NDIRECT];
+      bm->read_block(indirect_blockid, indirect_buf);
+
+      int delt_num = old_block_num - new_block_num;
+      for(int i = 0; i < delt_num; i++)
+        bm->free_block(indirect_buf[i]);
+
+      if(new_block_num == NDIRECT) /*free the indirect block*/
+        bm->free_block(indirect_blockid);
+    }
+  }else if(old_block_num < new_block_num){ // bigger than the old need to alloc blocks
+    if(old_block_num < NDIRECT){
+      if(new_block_num <= NDIRECT){
+        for(int i = old_block_num; i < new_block_num; i++)
+          ino->blocks[i] = bm->alloc_block();
+      }else{ // new_block_num need to use indirect block
+        for(int i = old_block_num; i < NDIRECT; i++){
+          
+        }
+      }
+    }
   }
 
   return;
