@@ -136,7 +136,7 @@ inode_manager::alloc_inode(uint32_t type)
   for(inode_num = 1; inode_num <= INODE_NUM; inode_num++){
     block_num = IBLOCK(inode_num, bm->sb.nblocks);
     bm->read_block(block_num, buf);
-    targetInode = (struct inode*)buf + inode_num%IPB;
+    targetInode = (struct inode*)buf + (inode_num - 1)%IPB;
 
     if(targetInode->type == 0) break;
   }
@@ -155,15 +155,25 @@ inode_manager::alloc_inode(uint32_t type)
   return inode_num;
 }
 
+/*
+ * your code goes here.
+ * note: you need to check if the inode is already a freed one;
+ * if not, clear it, and remember to write back to disk.
+ */
 void
 inode_manager::free_inode(uint32_t inum)
 {
-  /*
-   * your code goes here.
-   * note: you need to check if the inode is already a freed one;
-   * if not, clear it, and remember to write back to disk.
-   */
+  if(inum < 0 || inum > INODE_NUM) return;
 
+  inode_t *targetInode = get_inode(inum);
+  targetInode->type = 0;
+  put_inode(inum, targetInode);
+  /*char buf[BLOCK_SIZE];
+  inode_t *targetInode;
+  blockid_t inode_blockid = IBLOCK(inumm, bm->sb.nblocks);
+
+  bm->read_block(inode_blockid, buf);
+  targetInode = (inode_t *)buf + (inum - 1) % IPB;*/
   return;
 }
 
@@ -186,7 +196,7 @@ inode_manager::get_inode(uint32_t inum)
   bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
   // printf("%s:%d\n", __FILE__, __LINE__);
 
-  ino_disk = (struct inode*)buf + inum%IPB;
+  ino_disk = (struct inode*)buf + (inum - 1)%IPB;
   if (ino_disk->type == 0) {
     printf("\tim: inode not exist\n");
     return NULL;
@@ -209,7 +219,7 @@ inode_manager::put_inode(uint32_t inum, struct inode *ino)
     return;
 
   bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
-  ino_disk = (struct inode*)buf + inum%IPB;
+  ino_disk = (struct inode*)buf + (inum - 1)%IPB;
   *ino_disk = *ino;
   bm->write_block(IBLOCK(inum, bm->sb.nblocks), buf);
 }
@@ -252,7 +262,9 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
 
     bm->read_block(ino->blocks[NDIRECT], (char *)indirect_buf);
     int delt_num = all_block_num - NDIRECT;
-    for(int i = 0; i < delt_num - 1; i++)
+
+    if(rest_bytes) delt_num--;
+    for(int i = 0; i < delt_num; i++)
       bm->read_block(indirect_buf[i], *buf_out + (NDIRECT + i) * BLOCK_SIZE);
 
     if(rest_bytes){
