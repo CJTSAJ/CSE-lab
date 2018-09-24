@@ -29,7 +29,7 @@ disk::write_block(blockid_t id, const char *buf)
 blockid_t
 block_manager::alloc_block()
 {
-  char bitmap[BPB]; //all bits of every bitmap block
+  char buf[BLOCK_SIZE]; //all bits of every bitmap block
   blockid_t bitmap_blockid;
   char mask;
   char temp;
@@ -75,7 +75,7 @@ block_manager::free_block(uint32_t id)
 
   char buf[BLOCK_SIZE];
   blockid_t bit_block = BBLOCK(id);
-  int offset = id % BBP;
+  int offset = id % BPB;
   int offset_byte = offset / 8;
   char mask = ~(1 << (offset % 8));
   read_block(bit_block, buf);
@@ -218,15 +218,51 @@ inode_manager::put_inode(uint32_t inum, struct inode *ino)
 
 /* Get all the data of a file by inum.
  * Return alloced data, should be freed by caller. */
+ /*
+  * your code goes here.
+  * note: read blocks related to inode number inum,
+  * and copy them to buf_Out
+  */
 void
 inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
 {
-  /*
-   * your code goes here.
-   * note: read blocks related to inode number inum,
-   * and copy them to buf_Out
-   */
+  inode_t *ino = get_inode(inum);
 
+  if(!ino) return;
+
+  char buf[BLOCK_SIZE];
+  blockid_t indirect_buf[NINDIRECT];
+  *size = ino->size;
+  *buf_out = (char *)malloc(ino->size);
+
+  int all_block_num = (ino->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+  int rest_bytes = ino->size % BLOCK_SIZE;
+
+  if(all_block_num <= NDIRECT){
+    for(int i = 0; i < all_block_num - 1; i++)
+      bm->read_block(ino->blocks[i], *buf_out + i * BLOCK_SIZE);
+
+    if(rest_bytes){
+      bm->read_block(ino->blocks[all_block_num - 1], buf);
+      memcpy(*buf_out + (all_block_num - 1) * BLOCK_SIZE, buf, rest_bytes);
+    }
+  }else{
+    for(int i = 0; i < NDIRECT; i++)
+      bm->read_block(ino->blocks[i], *buf_out + i * BLOCK_SIZE);
+
+    bm->read_block(ino->blocks[NDIRECT], (char *)indirect_buf);
+    int delt_num = all_block_num - NDIRECT;
+    for(int i = 0; i < delt_num - 1; i++)
+      bm->read_block(indirect_buf[i], *buf_out + (NDIRECT + i) * BLOCK_SIZE);
+
+    if(rest_bytes){
+      bm->read_block(indirect_buf[all_block_num - NDIRECT - 1], buf);
+      memcpy(*buf_out + (all_block_num - 1) * BLOCK_SIZE, buf, rest_bytes);
+    }
+  }
+  ino->atime = (unsigned int)time(NULL);
+  put_inode(inum, ino);
+  free(ino);
   return;
 }
 
@@ -246,8 +282,8 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     return;
   }
   inode_t *ino = get_inode(inum);
-  int old_block_num = (ino->size - 1) / BLOCK_SIZE + 1;
-  int new_block_num = (size - 1) / BLOCK_SIZE + 1;
+  int old_block_num = (ino->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+  int new_block_num = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
   blockid_t indirect_buf[NINDIRECT];
 
   blockid_t all_blockids[MAXFILE]; // contain all blockid of the new inode
@@ -257,7 +293,7 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     memcpy(all_blockids, ino->blocks, old_block_num * sizeof(blockid_t));
   }else{
     memcpy(all_blockids, ino->blocks, NDIRECT * sizeof(blockid_t));
-    bm->read_block(ino->blocks[NDIRECT], indirect_buf);
+    bm->read_block(ino->blocks[NDIRECT], (char *)indirect_buf);
     memcpy(all_blockids + NDIRECT, indirect_buf, (old_block_num - NDIRECT) * sizeof(blockid_t));
   }
 
@@ -274,8 +310,9 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     for(int i = old_block_num; i < new_block_num; i++)
       all_blockids[i] = bm->alloc_block();
 
-    if(old_block_num <= NDIRECT && new_block_num > NINDIRECT)
+    if(old_block_num <= NDIRECT && new_block_num > NDIRECT)
       ino->blocks[NDIRECT] = bm->alloc_block();
+
   }
 
   /*write data to disk*/
@@ -292,6 +329,11 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     bm->write_block(ino->blocks[NDIRECT], tempBuf);
   }
 
+  ino->size = size;
+  ino->ctime = (unsigned int)time(NULL);
+  ino->mtime = (unsigned int)time(NULL);
+  put_inode(inum, ino);
+  free(ino);
   return;
   /*if(old_block_num > new_block_num){ // smaller than the old  need to free some blocks
     if(new_block_num < NDIRECT){
@@ -363,7 +405,7 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
 void
 inode_manager::getattr(uint32_t inum, extent_protocol::attr &a)
 {
-  if (inum == NULL)
+  if (!inum)
     return;
 
   if (inum < 0 || inum >= INODE_NUM) {
