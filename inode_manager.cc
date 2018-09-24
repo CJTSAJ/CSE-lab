@@ -250,10 +250,50 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
   int new_block_num = (size - 1) / BLOCK_SIZE + 1;
   blockid_t indirect_buf[NINDIRECT];
 
+  blockid_t all_blockids[MAXFILE]; // contain all blockid of the new inode
+
+  /*copy the old blockids to all_blockids*/
+  if(old_block_num <= NDIRECT){
+    memcpy(all_blockids, ino->blocks, old_block_num * sizeof(blockid_t));
+  }else{
+    memcpy(all_blockids, ino->blocks, NDIRECT * sizeof(blockid_t));
+    bm->read_block(ino->blocks[NDIRECT], indirect_buf);
+    memcpy(all_blockids + NDIRECT, indirect_buf, (old_block_num - NDIRECT) * sizeof(blockid_t));
+  }
+
   /*adjust the number of blocks
   * no adjust if thay have the same number of blocks
   */
-  if(old_block_num > new_block_num){ // smaller than the old  need to free some blocks
+  if(old_block_num > new_block_num){// smaller than the old  need to free some blocks
+    for(int i = new_block_num; i < old_block_num; i++)
+      bm->free_block(all_blockids[i]);
+
+    if(old_block_num > NDIRECT && new_block_num <= NDIRECT)
+      bm->free_block(ino->blocks[NDIRECT]);
+  }else if(old_block_num < new_block_num){// bigger than the old need to alloc blocks
+    for(int i = old_block_num; i < new_block_num; i++)
+      all_blockids[i] = bm->alloc_block();
+
+    if(old_block_num <= NDIRECT && new_block_num > NINDIRECT)
+      ino->blocks[NDIRECT] = bm->alloc_block();
+  }
+
+  /*write data to disk*/
+  for(int i = 0; i < new_block_num; i++)
+    bm->write_block(all_blockids[i], buf + i * BLOCK_SIZE);
+
+  /*write the block id to ino*/
+  if(new_block_num <= NDIRECT){
+    memcpy(ino->blocks, all_blockids, new_block_num * sizeof(blockid_t));
+  }else{
+    memcpy(ino->blocks, all_blockids, NDIRECT * sizeof(blockid_t));
+    char tempBuf[BLOCK_SIZE];
+    memcpy(tempBuf, all_blockids + NDIRECT, (new_block_num - NDIRECT) * sizeof(blockid_t));
+    bm->write_block(ino->blocks[NDIRECT], tempBuf);
+  }
+
+  return;
+  /*if(old_block_num > new_block_num){ // smaller than the old  need to free some blocks
     if(new_block_num < NDIRECT){
       if(old_block_num <= NDIRECT){
         for(int i = new_block_num; i < old_block_num; i++)
@@ -264,22 +304,23 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
         blockid_t indirect_blockid = ino->blocks[NDIRECT];
         bm->read_block(indirect_blockid, indirect_buf);
 
-        bm->free_block(indirect_blockid);/*free the indirect block*/
+        bm->free_block(indirect_blockid);//free the indirect block
 
         int delt_num = old_block_num - NDIRECT;
         for(int i = 0; i < delt_num; i++)
           bm->free_block(indirect_buf[i]);
       }
-    }else{
-      /*read the indirect block*/
+    }else{ // old_block_num and new_block_num are all bigger than NDIRECT
+      //read the indirect block
       blockid_t indirect_blockid = ino->blocks[NDIRECT];
       bm->read_block(indirect_blockid, indirect_buf);
 
-      int delt_num = old_block_num - new_block_num;
-      for(int i = 0; i < delt_num; i++)
+      int end_num = old_block_num - NDIRECT;
+      int begin_num = new_block_num - NDIRECT;
+      for(int i = begin_num; i < end_num; i++)
         bm->free_block(indirect_buf[i]);
 
-      if(new_block_num == NDIRECT) /*free the indirect block*/
+      if(new_block_num == NDIRECT) //free the indirect block
         bm->free_block(indirect_blockid);
     }
   }else if(old_block_num < new_block_num){ // bigger than the old need to alloc blocks
@@ -288,14 +329,35 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
         for(int i = old_block_num; i < new_block_num; i++)
           ino->blocks[i] = bm->alloc_block();
       }else{ // new_block_num need to use indirect block
-        for(int i = old_block_num; i < NDIRECT; i++){
-          
-        }
-      }
-    }
-  }
+        for(int i = old_block_num; i < NDIRECT; i++)
+          ino->blocks[i] = bm->alloc_block();
 
-  return;
+        ino->blocks[NDIRECT] = bm->alloc_block();
+
+        int delt_num = new_block_num - NDIRECT;
+        bm->read_block(ino->blocks[NDIRECT], indirect_buf);
+
+        for(int i = 0; i < delt_num; i++)
+          indirect_buf[i] = bm->alloc_block();
+
+        //fresh the indirect block
+        bm->write_block(ino->blocks[NDIRECT], indirect_buf)
+      }
+    }else{ // old_block_num and new_block_num are all bigger than NDIRECT
+      if(old_block_num == NDIRECT)
+        ino->blocks[NDIRECT] == bm->alloc_block();
+
+      bm->read_block(ino->blocks[NDIRECT], indirect_buf);
+
+      int begin_num = old_block_num - NDIRECT;
+      int end_num = new_block_num - NDIRECT;
+      for(int i = begin_num; i < end_num; i++)
+        indirect_buf[i] = bm->alloc_block();
+
+      //fresh the indirect block
+      bm->write_block(ino->blocks[NDIRECT], indirect_buf)
+    }
+  }*/
 }
 
 void
