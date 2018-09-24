@@ -238,7 +238,7 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
 {
   inode_t *ino = get_inode(inum);
 
-  if(!ino) return;
+  if(!ino) return; //not exist
 
   char buf[BLOCK_SIZE];
   blockid_t indirect_buf[NINDIRECT];
@@ -426,6 +426,8 @@ inode_manager::getattr(uint32_t inum, extent_protocol::attr &a)
   }
 
   inode_t *temp = get_inode(inum);
+
+  if(!temp) return;
   a.type = temp->type;
   a.ctime = temp->ctime;
   a.mtime = temp->mtime;
@@ -439,13 +441,37 @@ inode_manager::getattr(uint32_t inum, extent_protocol::attr &a)
   return;
 }
 
+/*
+ * your code goes here
+ * note: you need to consider about both the data block and inode of the file
+ */
 void
 inode_manager::remove_file(uint32_t inum)
 {
-  /*
-   * your code goes here
-   * note: you need to consider about both the data block and inode of the file
-   */
+  inode_t *ino = get_inode(inum);
+  if(!ino) return; // not exisst
 
+  blockid_t indirect_buf[NINDIRECT];
+
+  int all_block_num = (ino->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+  if(all_block_num <= NDIRECT){
+    for(int i = 0; i < all_block_num; i++)
+      bm->free_block(ino->blocks[i]);
+  }else{
+    for(int i = 0; i < NDIRECT; i++)
+      bm->free_block(ino->blocks[i]);
+
+    /*free indirect block*/
+    bm->read_block(ino->blocks[NDIRECT], (char *)indirect_buf);
+    int delt_num = all_block_num - NDIRECT;
+    for(int i = 0; i < delt_num; i++)
+      bm->free_block(indirect_buf[i]);
+
+    bm->free_block(ino->blocks[NDIRECT]);
+  }
+
+  free_inode(inum);
+  free(ino);
   return;
 }
