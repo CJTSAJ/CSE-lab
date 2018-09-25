@@ -138,67 +138,97 @@ yfs_client::setattr(inum ino, size_t size)
 
     int old_size = buf.length();
 
-    if(size < old_size)
-      buf.substr(0, size);
+    if(size == old_size) return r;
+
+    buf.resize(size, '\0');
 
     EXT_RPC(ec->put(ino, buf));
 release:
     return r;
 }
 
+/*
+ * your code goes here.
+ * note: lookup is what you need to check if file exist;
+ * after create file or dir,
+ * you must remember to modify the parent infomation.
+ */
 int
 yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
 {
     int r = OK;
+    if(!isdir(parent))
+      return IOERR;
 
-    /*
-     * your code goes here.
-     * note: lookup is what you need to check if file exist;
-     * after create file or dir, you must remember to modify the parent infomation.
-     */
+    /*create file*/
+    EXT_RPC(ec->create(extent_protocol::T_FILE, ino_out));
 
+    /*write it to parent*/
+    std::string buf;
+    ec->get(parent, buf);
+
+    std::string temp_name = name;
+    std::ostringstream ost;
+    ost.put((unsigned char)temp_name.length());
+    ost.write(temp_name, temp_name.length());
+    ost.write((char*)&ino_out, sizeof(inum));
+
+    buf.append(ost.str());
+    EXT_RPC(ec->put(parent, buf));
+release:
     return r;
 }
 
+/*
+ * your code goes here.
+ * note: lookup is what you need to check if directory exist;
+ * after create file or dir, you must remember to modify the parent infomation.
+ */
 int
 yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
 {
     int r = OK;
 
-    /*
-     * your code goes here.
-     * note: lookup is what you need to check if directory exist;
-     * after create file or dir, you must remember to modify the parent infomation.
-     */
+
 
     return r;
 }
 
+/*
+ * your code goes here.
+ * note: lookup file from parent dir according to name;
+ * you should design the format of directory content.
+ */
 int
 yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out)
 {
     int r = OK;
 
-    /*
-     * your code goes here.
-     * note: lookup file from parent dir according to name;
-     * you should design the format of directory content.
-     */
-
     return r;
 }
 
+/*
+ * your code goes here.
+ * note: you should parse the dirctory content using your defined format,
+ * and push the dirents to the list.
+ */
 int
 yfs_client::readdir(inum dir, std::list<dirent> &list)
 {
     int r = OK;
 
-    /*
-     * your code goes here.
-     * note: you should parse the dirctory content using your defined format,
-     * and push the dirents to the list.
-     */
+    if(dir < 1 && dir > INODE_NUM)
+      return IOERR;
+    list.clear();
 
+    /*read the content of directory*/
+    std::string dir_content;
+    EXT_RPC(ec->get(dir, dir_content));
+
+    std::istringstream ist;
+    ist.str(dir_content);
+
+release:
     return r;
 }
 
