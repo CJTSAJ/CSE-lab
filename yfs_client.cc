@@ -227,7 +227,27 @@ yfs_client::readdir(inum dir, std::list<dirent> &list)
 
     std::istringstream ist;
     ist.str(dir_content);
+    int filename_len;
+    char tempC;
+    char filename[MAXFILELEN];
+    dirent entry;
+    inum file_inum;
 
+    //the format of directory content:
+    //filenameLen+filename+inum
+    while(ist.get(tempC)){
+      filename_len = (int)(unsigned char)tempC;
+
+      //read file name
+      ist.read(filename, filename_len);
+      entry.name = std::string(filename, filename_len);
+
+      //read inum
+      ist.read((char*)&file_inum, sizeof(inum));
+      entry.inum = file_inum;
+
+      list.push_back(entry);
+    }
 release:
     return r;
 }
