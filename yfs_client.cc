@@ -132,11 +132,11 @@ yfs_client::setattr(inum ino, size_t size)
     if(ino < 1 || ino > INODE_NUM)
       return IOERR;
 
-
+    int old_size;
     std::string buf;
     EXT_RPC(ec->get(ino, buf));
 
-    int old_size = buf.length();
+    old_size = buf.length();
 
     if(size == old_size) return r;
 
@@ -160,17 +160,17 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
     if(!isdir(parent))
       return IOERR;
 
+    std::string temp_name = name;
+    std::ostringstream ost;
+    std::string buf;
     /*create file*/
     EXT_RPC(ec->create(extent_protocol::T_FILE, ino_out));
 
     /*write it to parent*/
-    std::string buf;
-    ec->get(parent, buf);
 
-    std::string temp_name = name;
-    std::ostringstream ost;
+    ec->get(parent, buf);
     ost.put((unsigned char)temp_name.length());
-    ost.write(temp_name, temp_name.length());
+    ost.write(name, temp_name.length());
     ost.write((char*)&ino_out, sizeof(inum));
 
     buf.append(ost.str());
@@ -203,7 +203,22 @@ int
 yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out)
 {
     int r = OK;
+    if(parent < 1 || parent > INODE_NUM)
+      return IOERR;
 
+    std::string filename = std::string(name);
+    std::list<dirent> entryList;
+    EXT_RPC(readdir(parent, entryList));
+
+    for(std::list<dirent>::iterator it = entryList.begin(); it != entryList.end(); it++){
+      if(filename == it->name){
+        found = true;
+        ino_out = it->inum;
+        break;
+      }
+    }
+
+release:
     return r;
 }
 
@@ -221,18 +236,17 @@ yfs_client::readdir(inum dir, std::list<dirent> &list)
       return IOERR;
     list.clear();
 
-    /*read the content of directory*/
-    std::string dir_content;
-    EXT_RPC(ec->get(dir, dir_content));
-
     std::istringstream ist;
-    ist.str(dir_content);
     int filename_len;
     char tempC;
     char filename[MAXFILELEN];
     dirent entry;
     inum file_inum;
 
+    /*read the content of directory*/
+    std::string dir_content;
+    EXT_RPC(ec->get(dir, dir_content));
+    ist.str(dir_content);
     //the format of directory content:
     //filenameLen+filename+inum
     while(ist.get(tempC)){
