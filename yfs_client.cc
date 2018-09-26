@@ -9,6 +9,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#define EXT_RPC(xx) do { \
+    if ((xx) != extent_protocol::OK) { \
+        printf("EXT_RPC Error: %s:%d \n", __FILE__, __LINE__); \
+        r = IOERR; \
+        goto release; \
+    } \
+} while (0)
+
 yfs_client::yfs_client()
 {
     ec = new extent_client();
@@ -61,12 +69,56 @@ yfs_client::isfile(inum inum)
  * readlink, issymlink here to implement symbolic link.
  *
  * */
+int
+yfs_client::symlink(inum parent, const char* name, const char* path, inum& ino_out)
+{
+  int r = OK;
+  if(!isdir(parent) || !name || !path)
+    return IOERR;
+  std::string buf;
+  std::string temp_name = std::string(name);
+  std::string path_s = std::string(path);
+  std::ostringstream ost;
+
+  /*write the path to */
+  EXT_RPC(ec->create(extent_protocol::T_LINK, ino_out));
+  EXT_RPC(ec->put(ino_out, path_s));
+
+  /*write it to parent*/
+  EXT_RPC(ec->get(parent, buf));
+
+  ost.put((unsigned char)(temp_name.length()));
+  ost.write(name, temp_name.length());
+  ost.write((char*)&ino_out, sizeof(inum));
+  buf = buf + ost.str();
+
+  EXT_RPC(ec->put(parent, buf));
+release:
+  return r;
+}
+int
+yfs_client::readlink(inum ino, std::string&link)
+{
+  int r = OK;
+  if(ino < 1 || ino > INODE_NUM)
+    return IOERR;
+
+  EXT_RPC(ec->get(ino, link));
+release:
+  return r;
+}
 
 bool
 yfs_client::isdir(inum inum)
 {
-    // Oops! is this still correct when you implement symlink?
-    return ! isfile(inum);
+    extent_protocol::attr a;
+    if(ec->getattr(inum, a) != extent_protocol::OK)
+      return IOERR;
+
+    if(a.type ==  extent_protocol::T_DIR)
+      return true;
+    else return false;
+
 }
 
 int
@@ -110,14 +162,6 @@ release:
     return r;
 }
 
-
-#define EXT_RPC(xx) do { \
-    if ((xx) != extent_protocol::OK) { \
-        printf("EXT_RPC Error: %s:%d \n", __FILE__, __LINE__); \
-        r = IOERR; \
-        goto release; \
-    } \
-} while (0)
 
 // Only support set size of attr
 /*
@@ -405,8 +449,8 @@ int yfs_client::unlink(inum parent,const char *name)
         break;
     }
 
-    if(it == all_files.end() || !isfile(it->inum))
-      return IOERR;
+    if(it == all_files.end())
+      return NOENT;
 
     all_files.erase(it);
     EXT_RPC(ec->remove(it->inum));
