@@ -10,13 +10,19 @@ disk::disk()
 void
 disk::read_block(blockid_t id, char *buf)
 {
-  memcpy(buf, blocks[id - 1], BLOCK_SIZE);
+  if (id < 0 || id >= BLOCK_NUM || !buf)
+        return;
+
+  memcpy(buf, blocks[id], BLOCK_SIZE);
 }
 
 void
 disk::write_block(blockid_t id, const char *buf)
 {
-  memcpy(blocks[id - 1], buf, BLOCK_SIZE);
+  if (id < 0 || id >= BLOCK_NUM || !buf)
+        return;
+
+  memcpy(blocks[id], buf, BLOCK_SIZE);
 }
 
 // block layer -----------------------------------------
@@ -276,11 +282,6 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
     }
   }
 
-  //test
-  /*std::string testS;
-  testS.assign(*buf_out, *size);
-  std::cout<<"read_file:" << testS << '\n';*/
-
   ino->atime = (unsigned int)time(NULL);
   put_inode(inum, ino);
   free(ino);
@@ -297,14 +298,13 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
 void
 inode_manager::write_file(uint32_t inum, const char *buf, int size)
 {
-  if(size <= 0 || buf == NULL) return;
-  if (inum < 0 || inum >= INODE_NUM) {
+
+  if(size < 0 || !buf) return;
+  if (inum < 0 || inum > INODE_NUM) {
     printf("write_file: inum out of range\n");
     return;
   }
-  /*std::string testS;
-  testS.assign(buf, size);
-  std::cout << "wirte_file:" << testS << '\n';*/
+
   inode_t *ino = get_inode(inum);
   int old_block_num = (ino->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
   int new_block_num = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -312,7 +312,7 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
 
   blockid_t all_blockids[MAXFILE]; // contain all blockid of the new inode
 
-  /*copy the old blockids to all_blockids*/
+  //copy the old blockids to all_blockids
   if(old_block_num <= NDIRECT){
     memcpy(all_blockids, ino->blocks, old_block_num * sizeof(blockid_t));
   }else{
@@ -321,9 +321,8 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     memcpy(all_blockids + NDIRECT, indirect_buf, (old_block_num - NDIRECT) * sizeof(blockid_t));
   }
 
-  /*adjust the number of blocks
-  * no adjust if thay have the same number of blocks
-  */
+  //adjust the number of blocks
+  // no adjust if thay have the same number of blocks
   if(old_block_num > new_block_num){// smaller than the old  need to free some blocks
     for(int i = new_block_num; i < old_block_num; i++)
       bm->free_block(all_blockids[i]);
@@ -339,11 +338,19 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
 
   }
 
-  /*write data to disk*/
-  for(int i = 0; i < new_block_num; i++)
+  //write data to disk
+  int temp_num = new_block_num;
+  int rest_bytes = size % BLOCK_SIZE;
+  char temp_buf[BLOCK_SIZE];
+  if(rest_bytes) temp_num--;
+  for(int i = 0; i < temp_num; i++)
     bm->write_block(all_blockids[i], buf + i * BLOCK_SIZE);
 
-  /*write the block id to ino*/
+  if(rest_bytes){
+    memcpy(temp_buf, buf + BLOCK_SIZE * temp_num, BLOCK_SIZE);
+    bm->write_block(all_blockids[temp_num], temp_buf);
+  }
+  //write the block id to ino
   if(new_block_num <= NDIRECT){
     memcpy(ino->blocks, all_blockids, new_block_num * sizeof(blockid_t));
   }else{
@@ -359,6 +366,7 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
   put_inode(inum, ino);
   free(ino);
   return;
+
   /*if(old_block_num > new_block_num){ // smaller than the old  need to free some blocks
     if(new_block_num < NDIRECT){
       if(old_block_num <= NDIRECT){
@@ -441,6 +449,7 @@ inode_manager::getattr(uint32_t inum, extent_protocol::attr &a)
 
   if(!temp) return;
   a.type = temp->type;
+  a.size = temp->size;
   a.ctime = temp->ctime;
   a.mtime = temp->mtime;
   a.atime = temp->atime;
