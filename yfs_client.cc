@@ -193,9 +193,26 @@ int
 yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
 {
     int r = OK;
+    if(!isdir(parent))
+      return IOERR;
 
+    std::string temp_name = std::string(name);
+    std::ostringstream ost;
+    std::string buf;
 
+    /*create file*/
+    EXT_RPC(ec->create(extent_protocol::T_DIR, ino_out));
 
+    /*write it to parent*/
+    EXT_RPC(ec->get(parent, buf));
+
+    ost.put((unsigned char)(temp_name.length()));
+    ost.write(name, temp_name.length());
+    ost.write((char*)&ino_out, sizeof(inum));
+    buf = buf + ost.str();
+
+    EXT_RPC(ec->put(parent, buf));
+release:
     return r;
 }
 
@@ -300,7 +317,8 @@ yfs_client::read(inum ino, size_t size, off_t off, std::string &data)
     if(size > (fileContent.length() - off))
       size = fileContent.length() - off;
     data = fileContent.substr(off, size);
-    std::cout<< "yfs:read off " << off<<"size "<<size<<"data:"<<data;
+    data.resize(size);
+
 release:
     return r;
 }
@@ -314,7 +332,7 @@ int
 yfs_client::write(inum ino, size_t size, off_t off, const char *data,
         size_t &bytes_written)
 {
-    printf("yfs:write data:%s off:%d size:%d\n", data, off, size);
+    std::cout<<"yfs:write off "<<off<<"size "<<size<<"data "<<data<<'\n';
     int r = OK;
     bytes_written = 0;
     if(ino < 1 || ino > INODE_NUM || off < 0 || !data)
@@ -324,9 +342,9 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
 
     int new_size;
     EXT_RPC(ec->get(ino, old_content));
-    printf("yfs: write old_content len: %d\n", old_content.length());
+    //printf("yfs: write old_content len: %d\n", old_content.length());
     if((off + size) > old_content.length()){
-      old_content.resize(off + size);
+      old_content.resize(off + size, '\0');
     }
 
     old_content.replace(off, size, std::string(data, size));
@@ -336,7 +354,9 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
 release:
     return r;
 }
-/*char *temp = content_buf;
+/*
+
+char *temp = content_buf;
 std::string new_content;
 for(int i = 0; i < size + off; i++){ // fill the space with \0
   *temp = '\0';
@@ -361,15 +381,43 @@ new_content = std::string(content_buf, new_size);*/
 std::cout << "old_content:" << old_content;
 std::cout << "new_content:" << new_content;*/
 
+/*
+ * your code goes here.
+ * note: you should remove the file using ec->remove,
+ * and update the parent directory content.
+ */
 int yfs_client::unlink(inum parent,const char *name)
 {
     int r = OK;
 
-    /*
-     * your code goes here.
-     * note: you should remove the file using ec->remove,
-     * and update the parent directory content.
-     */
+    if (!isdir(parent) || !name)
+        return IOERR;
 
+    std::list<dirent> all_files;
+    std::list<dirent>::iterator it;
+    std::string file_name = std::string(name);
+    std::ostringstream ost;
+
+    EXT_RPC(readdir(parent, all_files));
+
+    for(it = all_files.begin(); it != all_files.end(); it++){
+      if(file_name == it->name)
+        break;
+    }
+
+    if(it == all_files.end() || !isfile(it->inum))
+      return IOERR;
+
+    all_files.erase(it);
+    EXT_RPC(ec->remove(it->inum));
+
+    for(it = all_files.begin(); it != all_files.end(); it++){
+      ost.put((unsigned char)(it->name.length()));
+      ost.write(it->name.c_str(), it->name.length());
+      ost.write((char*)&(it->inum), sizeof(inum));
+    }
+
+    EXT_RPC(ec->put(parent, ost.str()));
+release:
     return r;
 }
