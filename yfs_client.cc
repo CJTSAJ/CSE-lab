@@ -288,7 +288,7 @@ release:
 int
 yfs_client::read(inum ino, size_t size, off_t off, std::string &data)
 {
-    printf("read file %d %d %d\n", ino, size, off);
+    printf("yfs:read %d %d %d\n", ino, size, off);
     int r = OK;
 
     if(ino < 1 || ino > INODE_NUM || off < 0)
@@ -297,8 +297,10 @@ yfs_client::read(inum ino, size_t size, off_t off, std::string &data)
     std::string fileContent;
 
     EXT_RPC(ec->get(ino, fileContent));
+    if(size > (fileContent.length() - off))
+      size = fileContent.length() - off;
     data = fileContent.substr(off, size);
-    std::cout<<"data:"<<data;
+    std::cout<< "yfs:read off " << off<<"size "<<size<<"data:"<<data;
 release:
     return r;
 }
@@ -312,36 +314,52 @@ int
 yfs_client::write(inum ino, size_t size, off_t off, const char *data,
         size_t &bytes_written)
 {
-
+    printf("yfs:write data:%s off:%d size:%d\n", data, off, size);
     int r = OK;
     bytes_written = 0;
     if(ino < 1 || ino > INODE_NUM || off < 0 || !data)
       return IOERR;
 
-    char *content_buf = (char *)malloc(size + off);
+    std::string old_content;
 
-    char *temp = content_buf;
-    for(int i = 0; i < size + off; i++){ // fill the space with \0
-      *temp = '\0';
-      temp++;
+    int new_size;
+    EXT_RPC(ec->get(ino, old_content));
+    printf("yfs: write old_content len: %d\n", old_content.length());
+    if((off + size) > old_content.length()){
+      old_content.resize(off + size);
     }
 
-    std::string old_content;
-    std::string new_content;
-    EXT_RPC(ec->get(ino, old_content));
+    old_content.replace(off, size, std::string(data, size));
 
-    memcpy(content_buf, old_content.c_str(), old_content.length());
-    memcpy(content_buf + off, data, size);
-    new_content = std::string(content_buf);
-    new_content.resize(off + size);
-    /*printf("off:%d  size: %d new_content size: %d  data : %s  content_buf:%s \n", off, size, new_content.length(), data, content_buf);
-    std::cout << "old_content:" << old_content;
-    std::cout << "new_content:" << new_content;*/
-    EXT_RPC(ec->put(ino, new_content));
+    EXT_RPC(ec->put(ino, old_content));
     bytes_written = size;
 release:
     return r;
 }
+/*char *temp = content_buf;
+std::string new_content;
+for(int i = 0; i < size + off; i++){ // fill the space with \0
+  *temp = '\0';
+  temp++;
+}
+if(old_content.length() >= (off + size)){
+  new_size = old_content.length();
+}else
+char *content_buf;
+char *temp;*/
+/*content_buf = (char *)malloc(new_size);
+temp = content_buf;
+for(int i = 0; i < new_size; i++){// fill the space with \0
+  *temp = '\0';
+  temp++;
+}
+memcpy(content_buf, old_content.c_str(), old_content.length());
+memcpy(content_buf + off, data, size);
+new_content = std::string(content_buf, new_size);*/
+//new_content.resize(off + size);
+/*printf("off:%d  size: %d new_content size: %d  data : %s  content_buf:%s \n", off, size, new_content.length(), data, content_buf);
+std::cout << "old_content:" << old_content;
+std::cout << "new_content:" << new_content;*/
 
 int yfs_client::unlink(inum parent,const char *name)
 {
