@@ -1,5 +1,5 @@
 #include "inode_manager.h"
-
+#include <string>
 // disk layer -----------------------------------------
 
 disk::disk()
@@ -186,7 +186,7 @@ inode_manager::get_inode(uint32_t inum)
   struct inode *ino, *ino_disk;
   char buf[BLOCK_SIZE];
 
-  printf("\tim: get_inode %d\n", inum);
+  printf("\tim: get_inode %d \n", inum);
 
   if (inum < 0 || inum >= INODE_NUM) {
     printf("\tim: inum out of range\n");
@@ -205,6 +205,7 @@ inode_manager::get_inode(uint32_t inum)
   ino = (struct inode*)malloc(sizeof(struct inode));
   *ino = *ino_disk;
 
+  printf("getindoe inodetype %d inodesize %d\n", ino->type, ino->size);
   return ino;
 }
 
@@ -214,7 +215,7 @@ inode_manager::put_inode(uint32_t inum, struct inode *ino)
   char buf[BLOCK_SIZE];
   struct inode *ino_disk;
 
-  printf("\tim: put_inode %d\n", inum);
+  printf("\tim: put_inode %d inodetype %d inodesize %d\n", inum, ino->type, ino->size);
   if (ino == NULL)
     return;
 
@@ -249,7 +250,9 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
   int rest_bytes = ino->size % BLOCK_SIZE;
 
   if(all_block_num <= NDIRECT){
-    for(int i = 0; i < all_block_num - 1; i++)
+    int temp = all_block_num;
+    if(rest_bytes) temp--;
+    for(int i = 0; i < temp; i++)
       bm->read_block(ino->blocks[i], *buf_out + i * BLOCK_SIZE);
 
     if(rest_bytes){
@@ -272,6 +275,12 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
       memcpy(*buf_out + (all_block_num - 1) * BLOCK_SIZE, buf, rest_bytes);
     }
   }
+
+  //test
+  /*std::string testS;
+  testS.assign(*buf_out, *size);
+  std::cout<<"read_file:" << testS << '\n';*/
+
   ino->atime = (unsigned int)time(NULL);
   put_inode(inum, ino);
   free(ino);
@@ -293,6 +302,9 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     printf("write_file: inum out of range\n");
     return;
   }
+  /*std::string testS;
+  testS.assign(buf, size);
+  std::cout << "wirte_file:" << testS << '\n';*/
   inode_t *ino = get_inode(inum);
   int old_block_num = (ino->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
   int new_block_num = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
