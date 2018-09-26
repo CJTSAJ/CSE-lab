@@ -156,24 +156,29 @@ release:
 int
 yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
 {
+
     int r = OK;
     if(!isdir(parent))
       return IOERR;
 
-    std::string temp_name = name;
+    std::string temp_name = std::string(name);
     std::ostringstream ost;
     std::string buf;
     /*create file*/
     EXT_RPC(ec->create(extent_protocol::T_FILE, ino_out));
 
+
     /*write it to parent*/
 
-    ec->get(parent, buf);
-    ost.put((unsigned char)temp_name.length());
+    EXT_RPC(ec->get(parent, buf));
+    //std::cout << "old_buf" << buf << "len:" << buf.length();
+    //printf("yfs_client create: parent %d name %s ino_out %d\n", parent, name, ino_out);
+    ost.put((unsigned char)(temp_name.length()));
     ost.write(name, temp_name.length());
     ost.write((char*)&ino_out, sizeof(inum));
-
-    buf.append(ost.str());
+    buf = buf + ost.str();
+    //std::cout << "new_buf" << buf << "len:" << buf.length();
+    //printf("yfs_client create: ost.str():%s len %d \n", ost.str().c_str(), temp_name.length());
     EXT_RPC(ec->put(parent, buf));
 release:
     return r;
@@ -202,8 +207,16 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
 int
 yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out)
 {
+    printf("look up:%d %s\n", parent, name);
     int r = OK;
-    if(parent < 1 || parent > INODE_NUM)
+    found = false;
+    if(parent < 1 || parent > INODE_NUM || !name)
+      return IOERR;
+
+    extent_protocol::attr a;
+    if(ec->getattr(parent, a) != extent_protocol::OK)
+      return IOERR;
+    if(a.type != extent_protocol::T_DIR)
       return IOERR;
 
     std::string filename = std::string(name);
@@ -211,6 +224,7 @@ yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out)
     EXT_RPC(readdir(parent, entryList));
 
     for(std::list<dirent>::iterator it = entryList.begin(); it != entryList.end(); it++){
+      std::cout<< "entry:  " << it->name << '\n';
       if(filename == it->name){
         found = true;
         ino_out = it->inum;
@@ -246,6 +260,7 @@ yfs_client::readdir(inum dir, std::list<dirent> &list)
     /*read the content of directory*/
     std::string dir_content;
     EXT_RPC(ec->get(dir, dir_content));
+    std::cout << "dir_content:" << dir_content << '\n';
     ist.str(dir_content);
     //the format of directory content:
     //filenameLen+filename+inum
@@ -266,31 +281,65 @@ release:
     return r;
 }
 
+/*
+ * your code goes here.
+ * note: read using ec->get().
+ */
 int
 yfs_client::read(inum ino, size_t size, off_t off, std::string &data)
 {
+    printf("read file %d %d %d\n", ino, size, off);
     int r = OK;
 
-    /*
-     * your code goes here.
-     * note: read using ec->get().
-     */
+    if(ino < 1 || ino > INODE_NUM || off < 0)
+      return IOERR;
 
+    std::string fileContent;
+
+    EXT_RPC(ec->get(ino, fileContent));
+    data = fileContent.substr(off, size);
+    std::cout<<"data:"<<data;
+release:
     return r;
 }
 
+/*
+ * your code goes here.
+ * note: write using ec->put().
+ * when off > length of original file, fill the holes with '\0'.
+ */
 int
 yfs_client::write(inum ino, size_t size, off_t off, const char *data,
         size_t &bytes_written)
 {
+
     int r = OK;
+    bytes_written = 0;
+    if(ino < 1 || ino > INODE_NUM || off < 0 || !data)
+      return IOERR;
 
-    /*
-     * your code goes here.
-     * note: write using ec->put().
-     * when off > length of original file, fill the holes with '\0'.
-     */
+    char *content_buf = (char *)malloc(size + off);
 
+    char *temp = content_buf;
+    for(int i = 0; i < size + off; i++){ // fill the space with \0
+      *temp = '\0';
+      temp++;
+    }
+
+    std::string old_content;
+    std::string new_content;
+    EXT_RPC(ec->get(ino, old_content));
+
+    memcpy(content_buf, old_content.c_str(), old_content.length());
+    memcpy(content_buf + off, data, size);
+    new_content = std::string(content_buf);
+    new_content.resize(off + size);
+    /*printf("off:%d  size: %d new_content size: %d  data : %s  content_buf:%s \n", off, size, new_content.length(), data, content_buf);
+    std::cout << "old_content:" << old_content;
+    std::cout << "new_content:" << new_content;*/
+    EXT_RPC(ec->put(ino, new_content));
+    bytes_written = size;
+release:
     return r;
 }
 
