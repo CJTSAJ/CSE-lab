@@ -244,6 +244,11 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
     std::ostringstream ost;
     std::string buf;
 
+    bool found = false;
+    inum temp_ino;
+    lookup(parent, name, found, temp_ino);
+    if(found)
+      EXIST;
     /*create file*/
     EXT_RPC(ec->create(extent_protocol::T_DIR, ino_out));
 
@@ -452,8 +457,12 @@ int yfs_client::unlink(inum parent,const char *name)
     if(it == all_files.end())
       return NOENT;
 
-    all_files.erase(it);
+    if (!isfile(it->inum)) 
+      return IOERR;
+
     EXT_RPC(ec->remove(it->inum));
+    all_files.erase(it);
+
 
     for(it = all_files.begin(); it != all_files.end(); it++){
       ost.put((unsigned char)(it->name.length()));

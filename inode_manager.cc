@@ -87,7 +87,7 @@ block_manager::free_block(uint32_t id)
   read_block(bit_block, buf);
 
   buf[offset_byte] = buf[offset_byte] & mask;
-  write_block(id, buf);
+  write_block(bit_block, buf);
   return;
 }
 
@@ -148,6 +148,7 @@ inode_manager::alloc_inode(uint32_t type)
   }
 
   targetInode->type = type;
+  targetInode->size = 0;
   targetInode->atime = (unsigned int)time(NULL);
   targetInode->mtime = (unsigned int)time(NULL);
   targetInode->ctime = (unsigned int)time(NULL);
