@@ -21,8 +21,10 @@ yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
   ec = new extent_client(extent_dst);
   lc = new lock_client(lock_dst);
+  lc->acquire(1);
   if (ec->put(1, "") != extent_protocol::OK)
       printf("error init root dir\n"); // XYB: init root dir
+  lc->release(1);
 }
 
 
@@ -189,6 +191,8 @@ yfs_client::setattr(inum ino, size_t size)
     if(ino < 1 || ino > INODE_NUM)
       return IOERR;
 
+    lc->acquire(ino);
+
     int old_size;
     std::string buf;
     EXT_RPC(ec->get(ino, buf));
@@ -200,6 +204,8 @@ yfs_client::setattr(inum ino, size_t size)
     buf.resize(size, '\0');
 
     EXT_RPC(ec->put(ino, buf));
+
+    lc->release(ino);
 release:
     return r;
 }
@@ -217,6 +223,15 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
     int r = OK;
     if(!isdir(parent) || !name)
       return IOERR;
+
+    bool found = false;
+    inum temp_ino;
+    lookup(parent, name, found, temp_ino);
+
+    if(found)
+      return EXIST;
+
+    lc->acquire(parent);
 
     std::string temp_name = std::string(name);
     std::ostringstream ost;
@@ -237,6 +252,8 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
     //std::cout << "new_buf" << buf << "len:" << buf.length();
     //printf("yfs_client create: ost.str():%s len %d \n", ost.str().c_str(), temp_name.length());
     EXT_RPC(ec->put(parent, buf));
+
+    lc->release(parent);
 release:
     return r;
 }
@@ -260,8 +277,10 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
     bool found = false;
     inum temp_ino;
     lookup(parent, name, found, temp_ino);
+
+    lc->acquire(parent);
     if(found)
-      EXIST;
+      return EXIST;
     /*create file*/
     EXT_RPC(ec->create(extent_protocol::T_DIR, ino_out));
 
@@ -274,6 +293,8 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
     buf = buf + ost.str();
 
     EXT_RPC(ec->put(parent, buf));
+
+    lc->release(parent);
 release:
     return r;
 }
@@ -338,7 +359,9 @@ yfs_client::readdir(inum dir, std::list<dirent> &list)
 
     /*read the content of directory*/
     std::string dir_content;
+    lc->acquire(dir);
     EXT_RPC(ec->get(dir, dir_content));
+    lc->release(dir);
     //std::cout << "dir_content:" << dir_content << '\n';
     ist.str(dir_content);
     //the format of directory content:
@@ -374,8 +397,9 @@ yfs_client::read(inum ino, size_t size, off_t off, std::string &data)
       return IOERR;
 
     std::string fileContent;
-
+    lc->acquire(ino);
     EXT_RPC(ec->get(ino, fileContent));
+    lc->release(ino);
     if(size > (fileContent.length() - off))
       size = fileContent.length() - off;
     data = fileContent.substr(off, size);
@@ -394,14 +418,14 @@ int
 yfs_client::write(inum ino, size_t size, off_t off, const char *data,
         size_t &bytes_written)
 {
-    std::cout<<"yfs:write off "<<off<<"size "<<size<<"data "<<data<<'\n';
+    //std::cout<<"yfs:write off "<<off<<"size "<<size<<"data "<<data<<'\n';
     int r = OK;
     bytes_written = 0;
     if(ino < 1 || ino > INODE_NUM || off < 0 || !data)
       return IOERR;
 
     std::string old_content;
-
+    lc->acquire(ino);
     int new_size;
     EXT_RPC(ec->get(ino, old_content));
     //printf("yfs: write old_content len: %d\n", old_content.length());
@@ -413,35 +437,11 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
 
     EXT_RPC(ec->put(ino, old_content));
     bytes_written = size;
+
+    lc->release(ino);
 release:
     return r;
 }
-/*
-
-char *temp = content_buf;
-std::string new_content;
-for(int i = 0; i < size + off; i++){ // fill the space with \0
-  *temp = '\0';
-  temp++;
-}
-if(old_content.length() >= (off + size)){
-  new_size = old_content.length();
-}else
-char *content_buf;
-char *temp;*/
-/*content_buf = (char *)malloc(new_size);
-temp = content_buf;
-for(int i = 0; i < new_size; i++){// fill the space with \0
-  *temp = '\0';
-  temp++;
-}
-memcpy(content_buf, old_content.c_str(), old_content.length());
-memcpy(content_buf + off, data, size);
-new_content = std::string(content_buf, new_size);*/
-//new_content.resize(off + size);
-/*printf("off:%d  size: %d new_content size: %d  data : %s  content_buf:%s \n", off, size, new_content.length(), data, content_buf);
-std::cout << "old_content:" << old_content;
-std::cout << "new_content:" << new_content;*/
 
 /*
  * your code goes here.
@@ -459,6 +459,7 @@ int yfs_client::unlink(inum parent,const char *name)
     std::list<dirent>::iterator it;
     std::string file_name = std::string(name);
     std::ostringstream ost;
+    inum ino_;
 
     EXT_RPC(readdir(parent, all_files));
 
@@ -470,20 +471,27 @@ int yfs_client::unlink(inum parent,const char *name)
     if(it == all_files.end())
       return NOENT;
 
-    if (!isfile(it->inum) && !issymlink(it->inum))
+
+
+    ino_ = it->inum;
+    if (!isfile(ino_) && !issymlink(ino_))
       return IOERR;
 
-    EXT_RPC(ec->remove(it->inum));
-    all_files.erase(it);
 
+    all_files.erase(it);
 
     for(it = all_files.begin(); it != all_files.end(); it++){
       ost.put((unsigned char)(it->name.length()));
       ost.write(it->name.c_str(), it->name.length());
       ost.write((char*)&(it->inum), sizeof(inum));
     }
-
+    lc->acquire(parent);
     EXT_RPC(ec->put(parent, ost.str()));
+    lc->release(parent);
+
+    lc->acquire(ino_);
+    EXT_RPC(ec->remove(ino_));
+    lc->release(ino_);
 release:
     return r;
 }

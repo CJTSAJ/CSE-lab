@@ -1,4 +1,4 @@
-// RPC stubs for clients to talk
+// RPC stubs for clients to talk to lock_server
 
 #include "lock_client.h"
 #include "rpc.h"
@@ -10,6 +10,7 @@
 
 lock_client::lock_client(std::string dst)
 {
+  printf("lock_client: %s", dst.c_str());
   sockaddr_in dstsock;
   make_sockaddr(dst.c_str(), &dstsock);
   cl = new rpcc(dstsock);
@@ -18,9 +19,15 @@ lock_client::lock_client(std::string dst)
   }
 }
 
+lock_client::~lock_client()
+{
+    delete cl;
+}
+
 int
 lock_client::stat(lock_protocol::lockid_t lid)
 {
+  printf("lock_client stat\n");
   int r;
   lock_protocol::status ret = cl->call(lock_protocol::stat, cl->id(), lid, r);
   VERIFY (ret == lock_protocol::OK);
@@ -30,19 +37,21 @@ lock_client::stat(lock_protocol::lockid_t lid)
 lock_protocol::status
 lock_client::acquire(lock_protocol::lockid_t lid)
 {
+  printf("lock_client acquire\n");
 	// Your lab2 part2 code goes here
   int r;
   lock_protocol::status ret = cl->call(lock_protocol::acquire, cl->id(), lid, r);
-  VERIFY (ret == lock_protocol::OK);
-  return r;
+  //VERIFY (ret == lock_protocol::OK);
+  return ret;
 }
 
 lock_protocol::status
 lock_client::release(lock_protocol::lockid_t lid)
 {
+  printf("lock_client release\n");
 	// Your lab2 part2 code goes here
   int r;
   lock_protocol::status ret = cl->call(lock_protocol::release, cl->id(), lid, r);
-  VERIFY (ret == lock_protocol::OK);
-  return r;
+  //VERIFY (ret == lock_protocol::OK);
+  return ret;
 }

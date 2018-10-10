@@ -13,7 +13,7 @@
 class lock_server {
 
  protected:
-  //int nacquire;
+  int nacquire;
   pthread_mutex_t mutex;
   pthread_cond_t cond;
   std::map<lock_protocol::lockid_t, bool> lock_list;
