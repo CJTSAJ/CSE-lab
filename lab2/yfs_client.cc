@@ -87,6 +87,7 @@ yfs_client::issymlink(inum inum)
 int
 yfs_client::symlink(inum parent, const char* name, const char* path, inum& ino_out)
 {
+  lc->acquire(parent);
   int r = OK;
   if(!isdir(parent) || !name || !path)
     return IOERR;
@@ -108,6 +109,7 @@ yfs_client::symlink(inum parent, const char* name, const char* path, inum& ino_o
   buf = buf + ost.str();
 
   EXT_RPC(ec->put(parent, buf));
+  lc->release(parent);
 release:
   return r;
 }
@@ -462,20 +464,26 @@ int yfs_client::unlink(inum parent,const char *name)
     inum ino_;
 
     EXT_RPC(readdir(parent, all_files));
-
+    lc->acquire(parent);
     for(it = all_files.begin(); it != all_files.end(); it++){
       if(file_name == it->name)
         break;
     }
 
-    if(it == all_files.end())
+    if(it == all_files.end()){
+      lc->release(parent);
       return NOENT;
+    }
+
 
 
 
     ino_ = it->inum;
-    if (!isfile(ino_) && !issymlink(ino_))
+    if (!isfile(ino_) && !issymlink(ino_)){
+      lc->release(parent);
       return IOERR;
+    }
+
 
 
     all_files.erase(it);
@@ -485,7 +493,7 @@ int yfs_client::unlink(inum parent,const char *name)
       ost.write(it->name.c_str(), it->name.length());
       ost.write((char*)&(it->inum), sizeof(inum));
     }
-    lc->acquire(parent);
+
     EXT_RPC(ec->put(parent, ost.str()));
     lc->release(parent);
 
