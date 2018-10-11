@@ -89,12 +89,25 @@ yfs_client::symlink(inum parent, const char* name, const char* path, inum& ino_o
 {
   lc->acquire(parent);
   int r = OK;
-  if(!isdir(parent) || !name || !path)
+  if(!isdir(parent) || !name || !path){
+    lc->release(parent);
     return IOERR;
+  }
+
   std::string buf;
   std::string temp_name = std::string(name);
   std::string path_s = std::string(path);
   std::ostringstream ost;
+
+  bool found = false;
+  inum temp_ino;
+  lookup_unlock(parent, name, found, temp_ino);
+
+  if(found){
+    lc->release(parent);
+    return EXIST;
+  }
+
 
   /*write the path to */
   EXT_RPC(ec->create(extent_protocol::T_LINK, ino_out));
@@ -201,7 +214,10 @@ yfs_client::setattr(inum ino, size_t size)
 
     old_size = buf.length();
 
-    if(size == old_size) return r;
+    if(size == old_size) {
+      lc->release(ino);
+      return r;
+    }
 
     buf.resize(size, '\0');
 
@@ -213,7 +229,7 @@ release:
 }
 
 /*
- * your code goes here.
+ * your code goes here
  * note: lookup is what you need to check if file exist;
  * after create file or dir,
  * you must remember to modify the parent infomation.
@@ -221,19 +237,22 @@ release:
 int
 yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
 {
-
+    lc->acquire(parent);
     int r = OK;
-    if(!isdir(parent) || !name)
+    if(!isdir(parent) || !name){
+      lc->release(parent);
       return IOERR;
+    }
+
 
     bool found = false;
     inum temp_ino;
-    lookup(parent, name, found, temp_ino);
+    lookup_unlock(parent, name, found, temp_ino);
 
-    if(found)
+    if(found){
+      lc->release(parent);
       return EXIST;
-
-    lc->acquire(parent);
+    }
 
     std::string temp_name = std::string(name);
     std::ostringstream ost;
@@ -268,6 +287,7 @@ release:
 int
 yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
 {
+    lc->acquire(parent);
     int r = OK;
     if(!isdir(parent))
       return IOERR;
@@ -278,11 +298,13 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
 
     bool found = false;
     inum temp_ino;
-    lookup(parent, name, found, temp_ino);
+    lookup_unlock(parent, name, found, temp_ino);
 
-    lc->acquire(parent);
-    if(found)
+    if(found){
+      lc->release(parent);
       return EXIST;
+    }
+
     /*create file*/
     EXT_RPC(ec->create(extent_protocol::T_DIR, ino_out));
 
@@ -500,6 +522,80 @@ int yfs_client::unlink(inum parent,const char *name)
     lc->acquire(ino_);
     EXT_RPC(ec->remove(ino_));
     lc->release(ino_);
+release:
+    return r;
+}
+
+int
+yfs_client::readdir_unlock(inum dir, std::list<dirent> &list)
+{
+  int r = OK;
+
+  if(dir < 1 && dir > INODE_NUM)
+    return IOERR;
+  list.clear();
+
+  std::istringstream ist;
+  int filename_len;
+  char tempC;
+  char filename[MAXFILELEN];
+  dirent entry;
+  inum file_inum;
+
+  /*read the content of directory*/
+  std::string dir_content;
+
+  EXT_RPC(ec->get(dir, dir_content));
+
+  //std::cout << "dir_content:" << dir_content << '\n';
+  ist.str(dir_content);
+  //the format of directory content:
+  //filenameLen+filename+inum
+  while(ist.get(tempC)){
+    filename_len = (int)(unsigned char)tempC;
+
+    //read file name
+    ist.read(filename, filename_len);
+    entry.name = std::string(filename, filename_len);
+
+    //read inum
+    ist.read((char*)&file_inum, sizeof(inum));
+    entry.inum = file_inum;
+
+    list.push_back(entry);
+  }
+release:
+  return r;
+}
+
+int
+yfs_client::lookup_unlock(inum parent, const char *name, bool &found, inum &ino_out)
+{
+    //printf("look up:%d %s\n", parent, name);
+    int r = OK;
+    found = false;
+    if(parent < 1 || parent > INODE_NUM || !name)
+      return IOERR;
+
+    extent_protocol::attr a;
+    if(ec->getattr(parent, a) != extent_protocol::OK)
+      return IOERR;
+    if(a.type != extent_protocol::T_DIR)
+      return IOERR;
+
+    std::string filename = std::string(name);
+    std::list<dirent> entryList;
+    EXT_RPC(readdir_unlock(parent, entryList));
+
+    for(std::list<dirent>::iterator it = entryList.begin(); it != entryList.end(); it++){
+      //std::cout<< "entry:  " << it->name << '\n';
+      if(filename == it->name){
+        found = true;
+        ino_out = it->inum;
+        break;
+      }
+    }
+
 release:
     return r;
 }
