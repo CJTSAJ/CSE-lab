@@ -11,7 +11,7 @@
 
 int lock_client_cache::last_port = 0;
 
-lock_client_cache::lock_client_cache(std::string xdst, 
+lock_client_cache::lock_client_cache(std::string xdst,
 				     class lock_release_user *_lu)
   : lock_client(xdst), lu(_lu)
 {
@@ -33,18 +33,52 @@ lock_protocol::status
 lock_client_cache::acquire(lock_protocol::lockid_t lid)
 {
   int ret = lock_protocol::OK;
+
+	//check if the client hold the clock
+	if(lock_list.find(lid) == lock_list.end()){
+		//no have the clock and acquire it from lock_server
+
+	}else{
+		//check the state of lock
+		switch (lock_list[lid].lock_state) {
+			case rlock_protocol::FREE:{
+
+			}
+			case rlock_protocol::LOCKED:{
+
+			}
+			case rlock_protocol::NONE:{
+
+			}
+			case rlock_protocol::ACQUIRING{
+
+			}
+			default:{
+
+			}
+		}
+	}
   return ret;
 }
 
 lock_protocol::status
 lock_client_cache::release(lock_protocol::lockid_t lid)
 {
+	//check if the client have the lock
+	if(lock_list.find(lid) == lock_list.end()){
+
+	}
+
+	//check the state of the lock
+	switch (lock_list[lid].lock_state) {
+		case :
+	}
   return lock_protocol::OK;
 
 }
 
 rlock_protocol::status
-lock_client_cache::revoke_handler(lock_protocol::lockid_t lid, 
+lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
                                   int &)
 {
   int ret = rlock_protocol::OK;
@@ -52,12 +86,9 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
 }
 
 rlock_protocol::status
-lock_client_cache::retry_handler(lock_protocol::lockid_t lid, 
+lock_client_cache::retry_handler(lock_protocol::lockid_t lid,
                                  int &)
 {
   int ret = rlock_protocol::OK;
   return ret;
 }
-
-
-
