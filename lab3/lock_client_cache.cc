@@ -27,13 +27,18 @@ lock_client_cache::lock_client_cache(std::string xdst,
   rpcs *rlsrpc = new rpcs(rlock_port);
   rlsrpc->reg(rlock_protocol::revoke, this, &lock_client_cache::revoke_handler);
   rlsrpc->reg(rlock_protocol::retry, this, &lock_client_cache::retry_handler);
+
+	pthread_mutex_init(&mutex);
+	pthread_cond_init(&cond);
 }
 
 lock_protocol::status
 lock_client_cache::acquire(lock_protocol::lockid_t lid)
 {
+	pthred_t selfThread = pthread_self();
   int ret = lock_protocol::OK;
 
+	pthread_mutex_lock(&mutex);
 	//check if the client hold the clock
 	if(lock_list.find(lid) == lock_list.end()){
 		//no have the clock and acquire it from lock_server
@@ -42,10 +47,14 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 		//check the state of lock
 		switch (lock_list[lid].lock_state) {
 			case rlock_protocol::FREE:{
-
+				lock_list[lid].owner = selfThread;
+				lock_list[lid].lock_state = rlock_protocol::LOCKED;
+				pthread_mutex_unlock(&mutex);
+				return ret;
 			}
 			case rlock_protocol::LOCKED:{
-
+				lock_list[lid].waitting_thread.push(selfThread);
+				pthread_mutex_unlock(&mutex);
 			}
 			case rlock_protocol::NONE:{
 

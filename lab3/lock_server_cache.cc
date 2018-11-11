@@ -45,7 +45,7 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
       }
       case rlock_protocol::LOCKED:{
         //add the thread to waitting queue, return retry and send revoke to client that hold the clock
-        lock_list[lid].waitting_thread.push(id);
+        lock_list[lid].waitting_client.push(id);
 
         //Since bind may block, the caller probably should not hold a mutex when calling safebind
         pthread_mutex_unlock(&mutex);
@@ -84,13 +84,13 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
   }
 
   //check if there are waittin threads
-  if(lock_list[lid].waitting_thread.empty()){
+  if(lock_list[lid].waitting_client.empty()){
     //if empty set the lock FREE
     lock_list[lid].lock_state = rlock_protocol::FREE;
     pthread_mutex_unlock(&mutex);
   }else{
-    string nextThread = lock_list[lid].waitting_thread.front();
-    lock_list.waitting_thread.pop();
+    string nextThread = lock_list[lid].waitting_client.front();
+    lock_list.waitting_client.pop();
     lock_list.lock_state = rlock_protocol::SENDING;
     lock_list.owner = id;
 

@@ -6,6 +6,7 @@
 
 #include <string>
 #include <map>
+#include <queue>
 
 #include "lock_protocol.h"
 #include "rpc.h"
@@ -16,6 +17,13 @@
 // Classes that inherit lock_release_user can override dorelease so that
 // that they will be called when lock_client releases a lock.
 // You will not need to do anything with this class until Lab 6.
+
+typedef struct{
+  pthred_t owner;
+  queue<pthred_t> waitting_thread;
+  rlock_protocol::state lock_state;
+} lock_info;
+
 class lock_release_user {
  public:
   virtual void dorelease(lock_protocol::lockid_t) = 0;
@@ -29,7 +37,9 @@ class lock_client_cache : public lock_client {
   std::string hostname;
   std::string id;
   map<lock_protocol::lockid_t, lock_info> lock_list; //all locks that this client hold
-  
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+
  public:
   static int last_port;
   lock_client_cache(std::string xdst, class lock_release_user *l = 0);

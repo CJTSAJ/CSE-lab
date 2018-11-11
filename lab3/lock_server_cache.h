@@ -13,7 +13,7 @@
 typedef struct{
   rlock_protocol::state lock_state;
   string owner;
-  queue<string> waitting_thread;
+  queue<string> waitting_client;
 }lock_info;
 
 class lock_server_cache {
