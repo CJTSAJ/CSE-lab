@@ -22,7 +22,6 @@ class lock_server_cache {
   pthread_mutex_t mutex;
   //pthread_cond_t cond;
   map<lock_protocol::lockid_t, lock_info> lock_list;
-
  public:
   lock_server_cache();
   lock_protocol::status stat(lock_protocol::lockid_t, int &);

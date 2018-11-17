@@ -29,19 +29,49 @@ lock_client_cache::lock_client_cache(std::string xdst,
   rlsrpc->reg(rlock_protocol::retry, this, &lock_client_cache::retry_handler);
 
 	pthread_mutex_init(&mutex);
-	pthread_cond_init(&cond);
+	//pthread_cond_init(&cond);
 }
 
 lock_protocol::status
 lock_client_cache::acquire(lock_protocol::lockid_t lid)
 {
-	pthred_t selfThread = pthread_self();
+	pthread_t selfThread = pthread_self();
   int ret = lock_protocol::OK;
-
+	int r;
 	pthread_mutex_lock(&mutex);
 	//check if the client hold the clock
 	if(lock_list.find(lid) == lock_list.end()){
 		//no have the clock and acquire it from lock_server
+		lock_info tmpLock;
+		tmpLock.recieve_message = false;
+		tmpLock.lock_state = rlock_protocol::ACQUIRING;
+		tmpLock.owner = -1;
+
+		thread_info tmpThread;
+		tmpThread.thread = selfThread;
+		pthread_cond_init(&(tmpThread.cond));
+
+		tmpLock.waitting_thread.push(tmpThread);
+		lock_list[lid] = tmpLock;
+		pthread_mutex_unlock(&mutex);
+
+		lock_protocol::status tmpRet = lc->call(lock_protocol::acquire, lid, id, r);
+
+		pthread_mutex_lock(&mutex);
+		if(tmpRet == lock_protocol::OK){
+			if(lock_list[lid].waitting_thread.empty()){
+				lock_list[lid].lock_state = rlock_protocol::FREE;
+			}else{
+				lock_list[lid].owner = lock_list[lid].waitting_thread.front().thread;
+				lock_list[lid].waitting_thread.pop();
+				lock_list[lid].lock_state = rlock_protocol::LOCKED;
+			}
+		}else{ //RETRY
+			while(lock_list[lid].owner != selfThread)
+				pthread_cond_wait(&(tmpThread.cond), mutex);
+		}
+
+		pthread_mutex_unlock(&mutex);
 
 	}else{
 		//check the state of lock
@@ -50,47 +80,86 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 				lock_list[lid].owner = selfThread;
 				lock_list[lid].lock_state = rlock_protocol::LOCKED;
 				pthread_mutex_unlock(&mutex);
-				return ret;
+				break;
 			}
-			case rlock_protocol::LOCKED:{
-				lock_list[lid].waitting_thread.push(selfThread);
+			case rlock_protocol::NONE:{// acquire the lock from the server
+				thread_info tmpThread;
+				tmpThread.thread = selfThread;
+				pthread_cond_init(&(tmpThread.cond));
+
+				lock_list[lid].waitting_thread.push(tmpThread);
+				lock_list[lid].lock_state = rlock_protocol::ACQUIRING;
 				pthread_mutex_unlock(&mutex);
-			}
-			case rlock_protocol::NONE:{
 
+				lc->call(lock_protocol::acquire, lid, id, r);
+				break;
 			}
-			case rlock_protocol::ACQUIRING{
 
-			}
 			default:{
+				thread_info tmpThread;
+				tmpThread.thread = selfThread;
+				pthread_cond_init(&(tmpThread.cond));
 
+				lock_list[lid].waitting_thread.push(tmpThread);
+
+				while(lock_list[lid].owner != selfThread)
+					pthread_cond_wait(&(tmpThread.cond), &mutex);
+
+				break;
 			}
 		}
 	}
+
+	pthread_mutex_unlock(&mutex);
   return ret;
 }
 
+//if server send a revoke signal, return lock to server
 lock_protocol::status
 lock_client_cache::release(lock_protocol::lockid_t lid)
 {
+	pthread_mutex_lock(&mutex);
+	int r;
+  int ret = lock_protocol::OK;
+	pthread_t selfThread = pthread_self();
+
 	//check if the client have the lock
-	if(lock_list.find(lid) == lock_list.end()){
-
+	if(lock_list.find(lid) == lock_list.end() || lock_list[lid].owner != selfThread){
+		//error
+		pthread_mutex_unlock(&mutex);
+		return lock_protocol::RPCERR;
 	}
 
-	//check the state of the lock
-	switch (lock_list[lid].lock_state) {
-		case :
+	//return the lock
+	if(lock_list[lid].recieve_message){
+		pthread_mutex_unlock(&mutex);
+
+		cl->call(lock_protocol::release, lid, id, r);
+
+		pthread_mutex_lock(&mutex);
+		lock_list[lid].lock_state = rlock_protocol::NONE;
+		lock_list[lid].recieve_message = false;
+	}else{//wake up a thread
+		lock_list[lid].lock_state = rlock_protocol::FREE;
+
+		if(!lock_list[lid].waitting_thread.empty()){
+			thread_info tmpThread = lock_list[lid].waitting_thread.front();
+			lock_list[lid].waitting_thread.pop();
+			pthread_cond_broadcast(&(tmpThread.cond));
+		}
 	}
+
+	pthread_mutex_unlock(&mutex);
   return lock_protocol::OK;
-
 }
 
 rlock_protocol::status
 lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
                                   int &)
 {
+	
   int ret = rlock_protocol::OK;
+	if(lock_list[lid].lock_state == rlock_protocol::FREE)
   return ret;
 }
 
