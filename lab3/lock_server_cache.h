@@ -10,6 +10,8 @@
 #include "rpc.h"
 #include "lock_server.h"
 
+using namespace std;
+
 typedef struct{
   rlock_protocol::state lock_state;
   string owner;

@@ -53,7 +53,7 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
         //Since bind may block, the caller probably should not hold a mutex when calling safebind
         pthread_mutex_unlock(&mutex);
 
-        handle tmpHandle(lock[lid].owner);
+        handle tmpHandle(lock_list[lid].owner);
         rpcc* cl = tmpHandle.safebind();
 
         int r;
@@ -90,9 +90,9 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
     pthread_mutex_unlock(&mutex);
   }else{
     string nextClient = lock_list[lid].waitting_client.front();
-    lock_list.waitting_client.pop();
-    lock_list.lock_state = rlock_protocol::LOCKED;
-    lock_list.owner = id;
+    lock_list[lid].waitting_client.pop();
+    lock_list[lid].lock_state = rlock_protocol::LOCKED;
+    lock_list[lid].owner = id;
 
     //let the next client retry
     pthread_mutex_unlock(&mutex);

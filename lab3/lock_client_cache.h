@@ -13,7 +13,7 @@
 #include "lock_client.h"
 #include "lang/verify.h"
 
-
+using namespace std;
 // Classes that inherit lock_release_user can override dorelease so that
 // that they will be called when lock_client releases a lock.
 // You will not need to do anything with this class until Lab 6.
