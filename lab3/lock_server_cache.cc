@@ -33,17 +33,20 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
     lock_list[lid] = tmpLockInfo;
 
     pthread_mutex_unlock(&mutex);
-    return ret;
   }else{
     //check the state of lock
     switch (lock_list[lid].lock_state) {
       case rlock_protocol::FREE:{
-        lock_list[lid].owner = lid;
+        lock_list[lid].owner = id;
         lock_list[lid].lock_state = rlock_protocol::LOCKED;
         pthread_mutex_unlock(&mutex);
-        return ret;
+        break;
       }
       case rlock_protocol::LOCKED:{
+        if(id == lock_list[lid].owner){
+          pthread_mutex_unlock(&mutex);
+          return lock_protocol::OWNED;
+        }
         //add the thread to waitting queue, return retry and send revoke to client that hold the clock
         lock_list[lid].waitting_client.push(id);
 
@@ -54,12 +57,13 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
         rpcc* cl = tmpHandle.safebind();
 
         int r;
-        ret = cl->call(rlock_protocol::revoke, lid, r);
+        cl->call(rlock_protocol::revoke, lid, r);
 
         return lock_protocol::RETRY;
       }
       default:{
         pthread_mutex_unlock(&mutex);
+        break;
       }
     }
   }
@@ -70,33 +74,29 @@ int
 lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
          int &r)
 {
+  pthread_mutex_lock(&mutex);
   lock_protocol::status ret = lock_protocol::OK;
 
-  pthread_mutex_lock(&mutex);
-
-  //check exist
-  if(lock_list.find(lid) == lock_list.end()){
-    return rlock_protocol::RPCERR;
-  }
-  //check owner
-  if(lock_list[lid].owner != id){
+  //check exist   check owner
+  if(lock_list.find(lid) == lock_list.end() || lock_list[lid].owner != id){
+    pthread_mutex_unlock(&mutex);
     return rlock_protocol::RPCERR;
   }
 
-  //check if there are waittin threads
+  //check if there are waitting clients
   if(lock_list[lid].waitting_client.empty()){
-    //if empty set the lock FREE
+    //if empty, set the lock FREE
     lock_list[lid].lock_state = rlock_protocol::FREE;
     pthread_mutex_unlock(&mutex);
   }else{
-    string nextThread = lock_list[lid].waitting_client.front();
+    string nextClient = lock_list[lid].waitting_client.front();
     lock_list.waitting_client.pop();
-    lock_list.lock_state = rlock_protocol::SENDING;
+    lock_list.lock_state = rlock_protocol::LOCKED;
     lock_list.owner = id;
 
     //let the next client retry
     pthread_mutex_unlock(&mutex);
-    handle tmpHandle(nextThread);
+    handle tmpHandle(nextClient);
     rpcc* cl = tmpHandle.safebind();
 
     int r;

@@ -24,7 +24,7 @@ typedef struct{
 } thread_info;
 
 typedef struct{
-  bool recieve_message;
+  bool recieve_revoke;
   pthread_t owner;
   queue<thread_info> waitting_thread;
   rlock_protocol::state lock_state;

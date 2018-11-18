@@ -7,7 +7,7 @@
 
 class lock_protocol {
  public:
-  enum xxstatus { OK, RETRY, RPCERR, NOENT, IOERR };
+  enum xxstatus { OK, RETRY, RPCERR, NOENT, IOERR, OWNED };
   typedef int status;
   typedef unsigned long long lockid_t;
   enum rpc_numbers {
@@ -20,7 +20,7 @@ class lock_protocol {
 class rlock_protocol {
 public:
     enum xxstatus { OK, RPCERR };
-    enum xxstate {NONE = 1, FREE, LOCKED, ACQUIRING, RELEASING, SENDING, REVOKE};
+    enum xxstate {NONE = 1, FREE, LOCKED, ACQUIRING, RELEASING};
     typedef int state;
     typedef int status;
     enum rpc_numbers {
