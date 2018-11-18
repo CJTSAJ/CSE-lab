@@ -22,13 +22,15 @@ lock_server_cache::lock_server_cache()
 int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
                                int &)
 {
-  lock_protocol::status ret = lock_protocol::OK;
-
+  //tprintf("server acquire\n");
+  tprintf("lock-server\tid:%s\tacquire lock:%ld\n",id.c_str(),lid);
   pthread_mutex_lock(&mutex);
+  lock_protocol::status ret = lock_protocol::OK;
   //alloc a new lock
   if(lock_list.find(lid) == lock_list.end()){
+    tprintf("server acquire: alloc new lock\n");
     lock_info tmpLockInfo;
-    tmpLockInfo.owner = lid;
+    tmpLockInfo.owner = id;
     tmpLockInfo.lock_state = rlock_protocol::LOCKED;
     lock_list[lid] = tmpLockInfo;
 
@@ -37,22 +39,24 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
     //check the state of lock
     switch (lock_list[lid].lock_state) {
       case rlock_protocol::FREE:{
+        tprintf("lock-server\tid:%s\tacquire lock:%ld\tfree lock\n",id.c_str(),lid);
         lock_list[lid].owner = id;
         lock_list[lid].lock_state = rlock_protocol::LOCKED;
         pthread_mutex_unlock(&mutex);
         break;
       }
       case rlock_protocol::LOCKED:{
+        tprintf("lock-server\tid:%s\tacquire lock:%ld\tlocked lock\n",id.c_str(),lid);
         if(id == lock_list[lid].owner){
           pthread_mutex_unlock(&mutex);
           return lock_protocol::OWNED;
         }
         //add the thread to waitting queue, return retry and send revoke to client that hold the clock
         lock_list[lid].waitting_client.push(id);
-
+        lock_list[lid].lock_state = rlock_protocol::ACQUIRING;
         //Since bind may block, the caller probably should not hold a mutex when calling safebind
         pthread_mutex_unlock(&mutex);
-
+        tprintf("lock-server\tid:%s\tacquire lock:%ld\trevoke owner:%s\n",id.c_str(),lid,lock_list[lid].owner.c_str());
         handle tmpHandle(lock_list[lid].owner);
         rpcc* cl = tmpHandle.safebind();
 
@@ -61,7 +65,14 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
 
         return lock_protocol::RETRY;
       }
+      case rlock_protocol::ACQUIRING:{
+        tprintf("lock-server\tid:%s\tacquire lock:%ld\tacquiring lock\n",id.c_str(),lid);
+        lock_list[lid].waitting_client.push(id);
+        pthread_mutex_unlock(&mutex);
+        return lock_protocol::RETRY;
+      }
       default:{
+        tprintf("server acquire: default\n");
         pthread_mutex_unlock(&mutex);
         break;
       }
@@ -74,6 +85,7 @@ int
 lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
          int &r)
 {
+  tprintf("lock-server\tid:%s\trelease lock:%ld\n",id.c_str(),lid);
   pthread_mutex_lock(&mutex);
   lock_protocol::status ret = lock_protocol::OK;
 
@@ -92,7 +104,7 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
     string nextClient = lock_list[lid].waitting_client.front();
     lock_list[lid].waitting_client.pop();
     lock_list[lid].lock_state = rlock_protocol::LOCKED;
-    lock_list[lid].owner = id;
+    lock_list[lid].owner = nextClient;
 
     //let the next client retry
     pthread_mutex_unlock(&mutex);

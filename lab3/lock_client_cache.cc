@@ -29,19 +29,24 @@ lock_client_cache::lock_client_cache(std::string xdst,
   rlsrpc->reg(rlock_protocol::retry, this, &lock_client_cache::retry_handler);
 
 	pthread_mutex_init(&mutex, NULL);
+	lock_list.clear();
 	//pthread_cond_init(&cond);
 }
 
 lock_protocol::status
 lock_client_cache::acquire(lock_protocol::lockid_t lid)
 {
+	//tprintf("client acquire\n");
 	pthread_mutex_lock(&mutex);
+
 	pthread_t selfThread = pthread_self();
+	tprintf("lock-client\tid:%s\tthread:%ld\tacquire lock:%ld\n",id.c_str(),selfThread,lid);
   int ret = lock_protocol::OK;
 	int r;
 
 	//check if the client hold the clock
 	if(lock_list.find(lid) == lock_list.end()){
+		tprintf("first acquire\n");
 		//no have the clock and acquire it from lock_server
 		lock_info tmpLock;
 		tmpLock.recieve_revoke = false;
@@ -57,6 +62,7 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 		if(tmpRet == lock_protocol::OK){// acquire successfully
 			lock_list[lid].lock_state = rlock_protocol::LOCKED;
 			lock_list[lid].owner = selfThread;
+
 			/*if(lock_list[lid].waitting_thread.empty()){
 				lock_list[lid].lock_state = rlock_protocol::FREE;
 			}else{
@@ -65,10 +71,11 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 				lock_list[lid].lock_state = rlock_protocol::LOCKED;
 			}*/
 		}else{ //RETRY   and impossible for OWNED
+			tprintf("lock-client\tid:%s\tthread:%ld\tcall return RETRY:%ld\n",id.c_str(),selfThread,lid);
 			thread_info tmpThread;
 			tmpThread.thread = selfThread;
 			pthread_cond_init(&(tmpThread.cond), NULL);
-			tmpLock.waitting_thread.push(tmpThread);
+			lock_list[lid].waitting_thread.push(tmpThread);
 
 			while(lock_list[lid].owner != selfThread)
 				pthread_cond_wait(&(tmpThread.cond), &mutex);
@@ -126,20 +133,23 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 lock_protocol::status
 lock_client_cache::release(lock_protocol::lockid_t lid)
 {
+	//tprintf("client release\n");
 	pthread_mutex_lock(&mutex);
 	int r;
   int ret = lock_protocol::OK;
 	pthread_t selfThread = pthread_self();
-
+	tprintf("lock-client\tid:%s\tthread:%ld\trelease lock:%ld\n",id.c_str(),selfThread,lid);
 	//check if the client have the lock
 	if(lock_list.find(lid) == lock_list.end() || lock_list[lid].owner != selfThread){
 		//error
+		tprintf("lock-client\trelease lock error\n")
 		pthread_mutex_unlock(&mutex);
 		return lock_protocol::RPCERR;
 	}
 
 	//return the lock
 	if(lock_list[lid].recieve_revoke){
+		lock_list[lid].lock_state = rlock_protocol::RELEASING;
 		pthread_mutex_unlock(&mutex);
 
 		cl->call(lock_protocol::release, lid, id, r);
@@ -154,7 +164,15 @@ lock_client_cache::release(lock_protocol::lockid_t lid)
 			lock_list[lid].lock_state = rlock_protocol::LOCKED;
 			lock_list[lid].owner = tmpThread.thread;
 			pthread_cond_broadcast(&(tmpThread.cond));
-		}else lock_list[lid].lock_state = rlock_protocol::FREE;
+		}else {
+			lock_list[lid].lock_state = rlock_protocol::RELEASING;
+			pthread_mutex_unlock(&mutex);
+
+			cl->call(lock_protocol::release, lid, id, r);
+
+			pthread_mutex_lock(&mutex);
+			lock_list[lid].lock_state = rlock_protocol::NONE;
+		}
 	}
 
 	pthread_mutex_unlock(&mutex);
@@ -165,6 +183,7 @@ rlock_protocol::status
 lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
                                   int &)
 {
+	tprintf("client revoke\n");
 	pthread_mutex_lock(&mutex);
   int ret = rlock_protocol::OK;
 	int r;
@@ -188,7 +207,9 @@ rlock_protocol::status
 lock_client_cache::retry_handler(lock_protocol::lockid_t lid,
                                  int &)
 {
+	tprintf("client retry\n");
 	pthread_mutex_lock(&mutex);
+	tprintf("lock-client\tid:%s\tthread:%ld\tretry:%ld\n",id.c_str(),pthread_self(),lid);
 	//pthread_t selfThread = pthread_self();
   int ret = rlock_protocol::OK;
 
