@@ -58,6 +58,10 @@ class lock_client_cache : public lock_client {
                                         int &);
   rlock_protocol::status retry_handler(lock_protocol::lockid_t,
                                        int &);
+  void checkAndAcquire(lock_protocol::lockid_t lid,
+                                   int &);
+  void acquireUntilGot(lock_protocol::lockid_t lid,
+                                   thread_info* tmpThread);
 };
 
 

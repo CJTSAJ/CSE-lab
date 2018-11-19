@@ -43,7 +43,7 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 	tprintf("lock-client\tid:%s\tthread:%ld\tacquire lock:%ld\n",id.c_str(),selfThread,lid);
   int ret = lock_protocol::OK;
 	int r;
-
+	thread_info* tmpThread = new thread_info(selfThread);
 	//check if the client hold the clock
 	if(lock_list.find(lid) == lock_list.end()){
 		tprintf("first acquire\n");
@@ -54,7 +54,8 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 		tmpLock.owner = -1;
 
 		lock_list[lid] = tmpLock;
-		pthread_mutex_unlock(&mutex);
+		acquireUntilGot(lid, tmpThread);
+		/*pthread_mutex_unlock(&mutex);
 
 		lock_protocol::status tmpRet = cl->call(lock_protocol::acquire, lid, id, r);
 
@@ -62,29 +63,19 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 		if(tmpRet == lock_protocol::OK){// acquire successfully
 			lock_list[lid].lock_state = rlock_protocol::LOCKED;
 			lock_list[lid].owner = selfThread;
-
-			/*if(lock_list[lid].waitting_thread.empty()){
-				lock_list[lid].lock_state = rlock_protocol::FREE;
-			}else{
-				lock_list[lid].owner = lock_list[lid].waitting_thread.front().thread;
-				lock_list[lid].waitting_thread.pop();
-				lock_list[lid].lock_state = rlock_protocol::LOCKED;
-			}*/
 		}else{ //RETRY   and impossible for OWNED
 			tprintf("lock-client\tid:%s\tthread:%ld\tcall return RETRY:%ld\n",id.c_str(),selfThread,lid);
-			/*thread_info tmpThread;
-			tmpThread.thread = selfThread;
-			pthread_cond_init(&(tmpThread.cond), NULL);*/
 			thread_info* tmpThread = new thread_info(selfThread);
 			lock_list[lid].waitting_thread.push(tmpThread);
 
 			while(lock_list[lid].owner != selfThread){
 				pthread_cond_wait(&(tmpThread->cond), &mutex);
-				tprintf("lock-client\tid:%s\tthread:%ld\twake go on:%ld\n",id.c_str(),selfThread,lid);
+				tprintf("lock-client\tid:%s\tthread:%ld\tacquire wake go on:%ld\n",id.c_str(),selfThread,lid);
 			}
-		}
+		}*/
 
 	}else{
+
 		//check the state of lock
 		switch (lock_list[lid].lock_state) {
 			case rlock_protocol::FREE:{
@@ -92,8 +83,21 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 				lock_list[lid].lock_state = rlock_protocol::LOCKED;
 				break;
 			}
+			case rlock_protocol::RELEASING:
+			case rlock_protocol::ACQUIRING:
+			case rlock_protocol::LOCKED:{
+				lock_list[lid].waitting_thread.push(tmpThread);
+				pthread_cond_wait(&(tmpThread->cond), &mutex);
+				if(lock_list[lid].lock_state == rlock_protocol::LOCKED &&
+					lock_list[lid].owner == selfThread){
+					pthread_mutex_unlock(&mutex);
+					return lock_protocol::OK;
+				}
+			}
 			case rlock_protocol::NONE:{// acquire the lock from the server
-				lock_list[lid].lock_state = rlock_protocol::ACQUIRING;
+				tprintf("lock-client\tid:%s\tthread:%ld\tacquire NONE:%ld\n",id.c_str(),selfThread,lid);
+				acquireUntilGot(lid, tmpThread);
+				/*lock_list[lid].lock_state = rlock_protocol::ACQUIRING;
 				pthread_mutex_unlock(&mutex);
 
 				lock_protocol::status tmpRet = cl->call(lock_protocol::acquire, lid, id, r);
@@ -103,27 +107,22 @@ lock_client_cache::acquire(lock_protocol::lockid_t lid)
 					lock_list[lid].lock_state = rlock_protocol::LOCKED;
 					lock_list[lid].owner = selfThread;
 				}else{ //RETRY and OWNED
-					/*thread_info tmpThread;
-					tmpThread.thread = selfThread;
-					pthread_cond_init(&(tmpThread.cond), NULL);*/
+					tprintf("lock-client\tid:%s\tthread:%ld\tacquire NONE RETRY:%ld\n",id.c_str(),selfThread,lid);
 					thread_info* tmpThread = new thread_info(selfThread);
 					lock_list[lid].waitting_thread.push(tmpThread);
 
 					while(lock_list[lid].owner != selfThread)
 						pthread_cond_wait(&(tmpThread->cond), &mutex);
-				}
+				}*/
 				break;
 			}
-
 			default:{ // sleep and return OK later
-				/*thread_info tmpThread;
-				tmpThread.thread = selfThread;
-				pthread_cond_init(&(tmpThread.cond), NULL);*/
+				/*tprintf("lock-client\tid:%s\tthread:%ld\tacquire default:%d\n",id.c_str(),selfThread,lock_list[lid].lock_state);
 				thread_info* tmpThread = new thread_info(selfThread);
 				lock_list[lid].waitting_thread.push(tmpThread);
 
 				while(lock_list[lid].owner != selfThread)
-					pthread_cond_wait(&(tmpThread->cond), &mutex);
+					pthread_cond_wait(&(tmpThread->cond), &mutex);*/
 
 				break;
 			}
@@ -146,49 +145,76 @@ lock_client_cache::release(lock_protocol::lockid_t lid)
 	tprintf("lock-client\tid:%s\tthread:%ld\trelease lock:%ld\n",id.c_str(),selfThread,lid);
 	//check if the client have the lock
 	if(lock_list.find(lid) == lock_list.end() || lock_list[lid].owner != selfThread){
-		//error
 		tprintf("lock-client\trelease lock error\n")
 		pthread_mutex_unlock(&mutex);
 		return lock_protocol::RPCERR;
 	}
 
+	bool hasRevoke = false;
 	//return the lock
 	if(lock_list[lid].recieve_revoke){
+		hasRevoke = true;
 		lock_list[lid].lock_state = rlock_protocol::RELEASING;
 		pthread_mutex_unlock(&mutex);
 		tprintf("lock-client\tid:%s\tthread:%ld\trelease revoke:%ld\n",id.c_str(),pthread_self(),lid);
 		cl->call(lock_protocol::release, lid, id, r);
 
 		pthread_mutex_lock(&mutex);
-		lock_list[lid].lock_state = rlock_protocol::NONE;
 		lock_list[lid].recieve_revoke = false;
-	}else{//wake up a thread
+		lock_list[lid].lock_state = rlock_protocol::NONE;
+		//checkAndAcquire(lid, r);
+	}else lock_list[lid].lock_state = rlock_protocol::FREE;
+
+	if(!lock_list[lid].waitting_thread.empty()){
+		thread_info* tmpThread = lock_list[lid].waitting_thread.front();
+		lock_list[lid].waitting_thread.pop();
+
+		if(!hasRevoke){
+			lock_list[lid].owner = tmpThread->thread;
+			lock_list[lid].lock_state = rlock_protocol::LOCKED;
+		}
+		pthread_cond_signal(&(tmpThread->cond));
+	}else{//if empty return
+		lock_list[lid].lock_state = rlock_protocol::RELEASING;
+		pthread_mutex_unlock(&mutex);
+		cl->call(lock_protocol::release, lid, id, r);
+		pthread_mutex_lock(&mutex);
+		lock_list[lid].lock_state = rlock_protocol::NONE;
 		if(!lock_list[lid].waitting_thread.empty()){
 			thread_info* tmpThread = lock_list[lid].waitting_thread.front();
+			lock_list[lid].waitting_thread.pop();
+			pthread_cond_signal(&(tmpThread->cond));
+		}
+	}
+	pthread_mutex_unlock(&mutex);
+  return lock_protocol::OK;
+
+	/*else{//wake up a thread
+		if(!lock_list[lid].waitting_thread.empty()){
+			thread_info* tmpThread = lock_list[lid].waitting_thread.front();
+			tprintf("lock-client\tid:%s\tthread:%ld\trelease wake:%ld\n",id.c_str(),pthread_self(),tmpThread->thread);
 			lock_list[lid].waitting_thread.pop();
 			lock_list[lid].lock_state = rlock_protocol::LOCKED;
 			lock_list[lid].owner = tmpThread->thread;
 			pthread_cond_signal(&(tmpThread->cond));
 		}else {
+			tprintf("lock-client\tid:%s\tthread:%ld\trelease return:%ld\n",id.c_str(),pthread_self(),lid);
 			lock_list[lid].lock_state = rlock_protocol::RELEASING;
 			pthread_mutex_unlock(&mutex);
 
 			cl->call(lock_protocol::release, lid, id, r);
 
 			pthread_mutex_lock(&mutex);
-			lock_list[lid].lock_state = rlock_protocol::NONE;
+			checkAndAcquire(lid, r);
 		}
-	}
-
-	pthread_mutex_unlock(&mutex);
-  return lock_protocol::OK;
+	}*/
 }
 
 rlock_protocol::status
 lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
                                   int &)
 {
-	tprintf("client revoke\n");
+	tprintf("lock-client\tid:%s\tthread:%ld\trevoke:%ld\n",id.c_str(),pthread_self(),lid);
 	pthread_mutex_lock(&mutex);
   int ret = rlock_protocol::OK;
 	int r;
@@ -200,9 +226,12 @@ lock_client_cache::revoke_handler(lock_protocol::lockid_t lid,
 
 		pthread_mutex_lock(&mutex);
 		lock_list[lid].lock_state = rlock_protocol::NONE;
-	}else{
-		lock_list[lid].recieve_revoke = true;
-	}
+		if(!lock_list[lid].waitting_thread.empty()){
+			thread_info* tmpThread = lock_list[lid].waitting_thread.front();
+			lock_list[lid].waitting_thread.pop();
+			pthread_cond_signal(&(tmpThread->cond));
+		}
+	}else lock_list[lid].recieve_revoke = true;
 
 	pthread_mutex_unlock(&mutex);
   return ret;
@@ -212,12 +241,12 @@ rlock_protocol::status
 lock_client_cache::retry_handler(lock_protocol::lockid_t lid,
                                  int &)
 {
-	tprintf("client retry\n");
+	//tprintf("client retry\n");
 	pthread_mutex_lock(&mutex);
 	tprintf("lock-client\tid:%s\tthread:%ld\tretry:%ld\n",id.c_str(),pthread_self(),lid);
 	//pthread_t selfThread = pthread_self();
   int ret = rlock_protocol::OK;
-
+	int r;
 	//wake up a thread
 	if(!lock_list[lid].waitting_thread.empty()){
 		lock_list[lid].lock_state = rlock_protocol::LOCKED;
@@ -226,8 +255,68 @@ lock_client_cache::retry_handler(lock_protocol::lockid_t lid,
 		lock_list[lid].waitting_thread.pop();
 		tprintf("lock-client\tid:%s\tthread:%ld\tretry wake up:%ld\n",id.c_str(),pthread_self(),tmpThread->thread);
 		pthread_cond_signal(&(tmpThread->cond));
-	}else lock_list[lid].lock_state = rlock_protocol::FREE;
+	}else {
+		lock_list[lid].lock_state = rlock_protocol::RELEASING;
+		pthread_mutex_unlock(&mutex);
+		cl->call(lock_protocol::release, lid, id, r);
+		pthread_mutex_lock(&mutex);
+		lock_list[lid].lock_state = rlock_protocol::NONE;
+		if(!lock_list[lid].waitting_thread.empty()){
+			thread_info* tmpThread = lock_list[lid].waitting_thread.front();
+			lock_list[lid].waitting_thread.pop();
+			pthread_cond_signal(&(tmpThread->cond));
+		}
+		//checkAndAcquire(lid, r);
+	}
 
 	pthread_mutex_unlock(&mutex);
   return ret;
+}
+
+void
+lock_client_cache::checkAndAcquire(lock_protocol::lockid_t lid, int &r)
+{
+	if(lock_list[lid].waitting_thread.empty())
+		lock_list[lid].lock_state = rlock_protocol::NONE;
+	else{
+		lock_list[lid].lock_state = rlock_protocol::ACQUIRING;
+		pthread_mutex_unlock(&mutex);
+		lock_protocol::status tmpRet = cl->call(lock_protocol::acquire, lid, id, r);
+		pthread_mutex_lock(&mutex);
+		if(tmpRet == lock_protocol::OK){
+			if(!lock_list[lid].waitting_thread.empty()){
+				thread_info* tmpThread = lock_list[lid].waitting_thread.front();
+				lock_list[lid].waitting_thread.pop();
+				lock_list[lid].lock_state = rlock_protocol::LOCKED;
+				lock_list[lid].owner = tmpThread->thread;
+				pthread_cond_signal(&(tmpThread->cond));
+			}else cl->call(lock_protocol::release, lid, id, r);
+		}
+	}
+}
+
+void
+lock_client_cache::acquireUntilGot(lock_protocol::lockid_t lid, thread_info* tmpThread)
+{
+	int r;
+	lock_list[lid].lock_state = rlock_protocol::ACQUIRING;
+	while(true){
+		pthread_mutex_unlock(&mutex);
+		lock_protocol::status tmpRet = cl->call(lock_protocol::acquire, lid, id, r);
+		pthread_mutex_lock(&mutex);
+
+		if(tmpRet == lock_protocol::OK){// acquire successfully
+			lock_list[lid].lock_state = rlock_protocol::LOCKED;
+			lock_list[lid].owner = tmpThread->thread;
+			return;
+		}else{ //RETRY and OWNED
+			lock_list[lid].waitting_thread.push(tmpThread);
+
+			pthread_cond_wait(&(tmpThread->cond), &mutex);
+			lock_list[lid].recieve_revoke = false;
+			if(lock_list[lid].owner == tmpThread->thread &&
+				lock_list[lid].lock_state == rlock_protocol::LOCKED)
+				break;
+		}
+	}
 }
