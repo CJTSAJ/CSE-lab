@@ -18,15 +18,17 @@ using namespace std;
 // that they will be called when lock_client releases a lock.
 // You will not need to do anything with this class until Lab 6.
 
-typedef struct{
+struct thread_info{
   pthread_t thread;
   pthread_cond_t cond;
-} thread_info;
+
+  thread_info(pthread_t p){thread = p;pthread_cond_init(&cond, NULL);}
+};
 
 typedef struct{
   bool recieve_revoke;
   pthread_t owner;
-  queue<thread_info> waitting_thread;
+  queue<thread_info*> waitting_thread;
   rlock_protocol::state lock_state;
 } lock_info;
 
