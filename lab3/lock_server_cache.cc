@@ -22,7 +22,7 @@ lock_server_cache::lock_server_cache()
 int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
                                int &)
 {
-  //tprintf("server acquire\n");
+  tprintf("server before\tid:%s\tacquire lock:%ld\n",id.c_str(),lid);
   pthread_mutex_lock(&mutex);
   tprintf("lock-server\tid:%s\tacquire lock:%ld\n",id.c_str(),lid);
   lock_protocol::status ret = lock_protocol::OK;
@@ -43,6 +43,7 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
         lock_list[lid].owner = id;
         lock_list[lid].lock_state = rlock_protocol::LOCKED;
         pthread_mutex_unlock(&mutex);
+        return lock_protocol::OK;
         break;
       }
       case rlock_protocol::LOCKED:{
@@ -65,6 +66,9 @@ int lock_server_cache::acquire(lock_protocol::lockid_t lid, std::string id,
 
         return lock_protocol::RETRY;
       }
+      case rlock_protocol::ASSIGNING:{
+        tprintf("lock-server\tid:%s\tacquire lock:%ld\ASSIGNING lock\n",id.c_str(),lid);
+      }
       case rlock_protocol::ACQUIRING:{
         tprintf("lock-server\tid:%s\tacquire lock:%ld\tacquiring lock\n",id.c_str(),lid);
         lock_list[lid].waitting_client.push(id);
@@ -85,12 +89,13 @@ int
 lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
          int &r)
 {
+  tprintf("server before\tid:%s\trelease lock:%ld\n",id.c_str(),lid);
   pthread_mutex_lock(&mutex);
   tprintf("lock-server\tid:%s\trelease lock:%ld\n",id.c_str(),lid);
   lock_protocol::status ret = lock_protocol::OK;
 
   //check exist   check owner
-  if(lock_list.find(lid) == lock_list.end() || lock_list[lid].owner != id){
+  if(lock_list.find(lid) == lock_list.end()){
     pthread_mutex_unlock(&mutex);
     return rlock_protocol::RPCERR;
   }
@@ -105,9 +110,8 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
     string nextClient = lock_list[lid].waitting_client.front();
     tprintf("lock-server\tid:%s\trelease lock next:%s\n",id.c_str(),nextClient.c_str());
     lock_list[lid].waitting_client.pop();
-    lock_list[lid].lock_state = rlock_protocol::LOCKED;
+    lock_list[lid].lock_state = rlock_protocol::ASSIGNING;
     lock_list[lid].owner = nextClient;
-
     //let the next client retry
     pthread_mutex_unlock(&mutex);
     handle tmpHandle(nextClient);
@@ -115,7 +119,12 @@ lock_server_cache::release(lock_protocol::lockid_t lid, std::string id,
 
     int r;
     cl->call(rlock_protocol::retry, lid, r);
+
+    /*pthread_mutex_lock(&mutex);
+    lock_list[lid].lock_state = rlock_protocol::LOCKED;
+    lock_list[lid].owner = nextClient;*/
   }
+  //pthread_mutex_unlock(&mutex);
   return ret;
 }
 
