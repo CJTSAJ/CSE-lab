@@ -20,8 +20,8 @@ void NameNode::init(const string &extent_dst, const string &lock_dst) {
 void NameNode::Beat()
 {
   while(true){
-    heart_beats++;
-    sleep(0);
+    this->heart_beats++;
+    sleep(1);
   }
 }
 
@@ -42,7 +42,7 @@ list<NameNode::LocatedBlock> NameNode::GetBlockLocations(yfs_client::inum ino) {
   int cnt = 0;
   for(auto i : blockids){
     cnt++;
-    LocatedBlock tmpLB(i, offset, cnt < len ? BLOCK_SIZE : last_size, master_datanode);
+    LocatedBlock tmpLB(i, offset, cnt < len ? BLOCK_SIZE : last_size, GetDatanodes());
     locs.push_back(tmpLB);
     offset += BLOCK_SIZE;
   }
@@ -65,7 +65,7 @@ NameNode::LocatedBlock NameNode::AppendBlock(yfs_client::inum ino) {
   ec->append_block(ino, blockid);
   record_blocks.insert(blockid);
   return LocatedBlock(blockid, attr.size,
-    (attr.size % BLOCK_SIZE) ? attr.size % BLOCK_SIZE : BLOCK_SIZE, master_datanode);
+    (attr.size % BLOCK_SIZE) ? attr.size % BLOCK_SIZE : BLOCK_SIZE, GetDatanodes());
 }
 
 bool NameNode::Rename(yfs_client::inum src_dir_ino, string src_name, yfs_client::inum dst_dir_ino, string dst_name) {
@@ -167,7 +167,7 @@ bool NameNode::Unlink(yfs_client::inum parent, string name, yfs_client::inum ino
 
 void NameNode::DatanodeHeartbeat(DatanodeIDProto id) {
   printf("DatanodeHeartbeat\n");fflush(stdout);
-  datanodes[id] = heart_beats;
+  datanodes[id] = this->heart_beats;
 }
 
 void NameNode::RegisterDatanode(DatanodeIDProto id) {
